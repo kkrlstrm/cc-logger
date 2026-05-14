@@ -2,7 +2,7 @@
 
 A film room for your Claude Code sessions.
 
-Captures every prompt, every sub-agent fan-out, every tool call to a local Postgres database so you can review what you actually did instead of what you thought you did. The goal isn't monitoring — it's practice review.
+Captures every prompt, every sub-agent fan-out, every tool call to a local Postgres database so you can review what you actually did instead of what you thought you did. The goal is monitoring + practice review.
 
 Built on [Claude Code's HTTP hooks](https://docs.claude.com/en/docs/claude-code/hooks) — no patches or modifications to Claude Code itself.
 
