@@ -1,0 +1,82 @@
+{
+  "_doc": "Merge the 'hooks' block below into ~/.claude/settings.json (top-level). Tool events use matchers to restrict to the cc-logger capture allowlist. mcp__.* uses regex.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Bash|Edit|Write|WebFetch|WebSearch",
+        "hooks": [
+          { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
+        ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent|Bash|Edit|Write|WebFetch|WebSearch",
+        "hooks": [
+          { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
+        ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Agent|Bash|Edit|Write|WebFetch|WebSearch",
+        "hooks": [
+          { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
+        ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

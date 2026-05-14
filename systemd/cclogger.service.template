@@ -1,0 +1,17 @@
+[Unit]
+Description=cc-logger — Claude Code observability capture service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__WORKING_DIR__
+ExecStart=__UV_PATH__ run --directory __WORKING_DIR__ cc-logger serve
+Restart=always
+RestartSec=10
+Environment="PATH=__PATH__"
+StandardOutput=append:__HOME__/.local/state/cc-logger/cc-logger.out.log
+StandardError=append:__HOME__/.local/state/cc-logger/cc-logger.err.log
+
+[Install]
+WantedBy=default.target

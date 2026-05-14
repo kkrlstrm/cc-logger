@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cc-logger"
+version = "0.1.0"
+description = "Local observability for Claude Code: captures sessions, sub-agents, and tool calls to Postgres."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Kai Karlstrom" }]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+cc-logger = "cc_logger.cli:main"
+
+[project.urls]
+Repository = "https://github.com/kkrlstrm/cc-logger"
+Issues = "https://github.com/kkrlstrm/cc-logger/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cc_logger"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

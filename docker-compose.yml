@@ -1,0 +1,38 @@
+# cc-logger — local Postgres + capture service
+# Usage: docker compose up -d
+# Then: docker compose exec cc-logger python migrations/001_initial_schema.py --apply
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: cclogger
+      POSTGRES_PASSWORD: cclogger
+      POSTGRES_DB: cclogger
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cclogger -d cclogger"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  cc-logger:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://cclogger:cclogger@postgres:5432/cclogger
+      HOOK_PORT: 8787
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      REDACT_SECRETS: ${REDACT_SECRETS:-1}
+    ports:
+      - "127.0.0.1:8787:8787"
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
