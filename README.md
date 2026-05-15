@@ -116,6 +116,7 @@ Twelve ready-to-run SQL files in [`queries/`](queries/) for the things you'll ke
 - `10_subagent_fanout_distribution.sql` — how often you fan out, and how wide
 - `11_longest_sessions_by_prompt.sql` — which prompts produced the longest sessions
 - `12_error_rates_by_tool.sql` — fail % per tool name
+- `13_tool_sequence_conformance.sql` — **process conformance**: groups sessions by their root-agent tool sequence to surface drift across repeat runs of the same agent. Modal paths vs. snowflakes.
 
 ## Schema
 
