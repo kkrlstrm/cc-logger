@@ -47,7 +47,9 @@ async def _worker(state: State) -> None:
         for attempt in range(2):
             try:
                 async with db.connection() as conn:
-                    await asyncio.wait_for(handlers.dispatch(conn, ev), timeout=10.0)
+                    # 60s: most handlers finish in <100ms, but Stop/SubagentStop/SessionEnd
+                    # also ingest the transcript file which can have hundreds of text blocks.
+                    await asyncio.wait_for(handlers.dispatch(conn, ev), timeout=60.0)
                 state.processed += 1
                 break
             except psycopg.OperationalError:

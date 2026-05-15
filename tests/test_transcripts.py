@@ -126,6 +126,32 @@ def test_skips_messages_without_id(tmp_path):
     assert blocks == []
 
 
+def test_extracts_timestamp(tmp_path):
+    p = _write_transcript(tmp_path, [
+        {
+            "type": "assistant",
+            "timestamp": "2026-05-13T09:51:02.278Z",
+            "message": {"id": "msg-1", "content": [{"type": "text", "text": "decision"}]},
+        },
+    ])
+    blocks = list(_iter_text_blocks(p))
+    assert blocks[0]["created_at"] is not None
+    assert blocks[0]["created_at"].year == 2026
+    assert blocks[0]["created_at"].month == 5
+    assert blocks[0]["created_at"].tzinfo is not None  # has timezone
+
+
+def test_handles_missing_timestamp(tmp_path):
+    p = _write_transcript(tmp_path, [
+        {
+            "type": "assistant",
+            "message": {"id": "msg-1", "content": [{"type": "text", "text": "decision"}]},
+        },
+    ])
+    blocks = list(_iter_text_blocks(p))
+    assert blocks[0]["created_at"] is None
+
+
 def test_position_tracks_line_number(tmp_path):
     p = _write_transcript(tmp_path, [
         {"type": "user", "message": {"id": "u-1", "content": []}},

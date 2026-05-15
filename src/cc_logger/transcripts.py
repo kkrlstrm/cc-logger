@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
@@ -33,9 +34,25 @@ from .redaction import redact_string
 log = logging.getLogger("cc_logger.transcripts")
 
 
+def _parse_ts(value: str | None) -> datetime | None:
+    """Parse Claude Code's ISO timestamp (e.g., '2026-05-13T09:51:02.278Z')."""
+    if not value:
+        return None
+    try:
+        # Python's fromisoformat handles 'Z' in 3.11+
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
 def _iter_text_blocks(transcript_path: Path) -> Iterator[dict]:
-    """Yield {message_id, block_index, text, position} for every text
-    block in every assistant message in the JSONL."""
+    """Yield {message_id, block_index, text, position, created_at} for every
+    text block in every assistant message in the JSONL.
+
+    `created_at` is the transcript's recorded timestamp for that message line —
+    NOT when we ingested it. This lets inspect.py interleave text blocks with
+    tool calls on the real timeline.
+    """
     position = 0
     with open(transcript_path) as f:
         for line in f:
@@ -56,6 +73,7 @@ def _iter_text_blocks(transcript_path: Path) -> Iterator[dict]:
             message_id = msg.get("id") or m.get("uuid") or m.get("messageId")
             if not message_id:
                 continue
+            ts = _parse_ts(m.get("timestamp"))
             for idx, block in enumerate(content):
                 if not isinstance(block, dict):
                     continue
@@ -69,6 +87,7 @@ def _iter_text_blocks(transcript_path: Path) -> Iterator[dict]:
                     "block_index": idx,
                     "text": text,
                     "position": position,
+                    "created_at": ts,
                 }
 
 
@@ -100,12 +119,14 @@ async def ingest(
             text = block["text"]
             if redact_enabled:
                 text = redact_string(text)
+            # COALESCE on created_at: if transcript had no timestamp, fall
+            # back to DB default (now()).
             await cur.execute(
                 """
                 INSERT INTO messages
                     (message_id, block_index, session_id, invocation_id,
-                     role, block_type, text, position)
-                VALUES (%s, %s, %s, %s, 'assistant', 'text', %s, %s)
+                     role, block_type, text, position, created_at)
+                VALUES (%s, %s, %s, %s, 'assistant', 'text', %s, %s, COALESCE(%s, now()))
                 ON CONFLICT (message_id, block_index) DO NOTHING
                 """,
                 (
@@ -115,6 +136,7 @@ async def ingest(
                     invocation_id,
                     text,
                     block["position"],
+                    block["created_at"],
                 ),
             )
             if cur.rowcount:
