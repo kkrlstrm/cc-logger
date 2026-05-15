@@ -1,6 +1,6 @@
 # cc-logger
 
-**Agent QA for Claude Code.** A local film room for your sessions and a conformance test for your agent workflows — captures every prompt, sub-agent, tool call, and Claude's narration between them into Postgres so you can see how the work actually happened, not just what came out.
+**Agent QA for Claude Code.** Replay sessions like game film, trace every sub-agent and tool call, and compare repeated runs to catch workflow drift. Captures every prompt, sub-agent, tool call, and Claude's narration between them into Postgres so you can see how the work actually happened, not just what came out.
 
 Two agent runs can produce identical-looking outputs while one took the happy path and the other recovered from three failed WebFetches, fell back to a different source, and got lucky. The outputs look the same. The processes are not. This is the tool that catches that.
 
