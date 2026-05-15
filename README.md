@@ -119,7 +119,7 @@ Twelve ready-to-run SQL files in [`queries/`](queries/) for the things you'll ke
 
 ## Schema
 
-Four tables: `sessions`, `agent_invocations`, `tool_calls`, `artifacts`. Full reference in [`docs/SCHEMA.md`](docs/SCHEMA.md).
+Five tables: `sessions`, `agent_invocations`, `tool_calls`, `artifacts`, `messages`. Full reference in [`docs/SCHEMA.md`](docs/SCHEMA.md).
 
 ## License
 
