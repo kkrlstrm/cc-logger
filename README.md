@@ -1,13 +1,21 @@
 # cc-logger
 
-A film room for your Claude Code sessions.
+**Agent QA for Claude Code.** A local film room for your sessions and a conformance test for your agent workflows — captures every prompt, sub-agent, tool call, and Claude's narration between them into Postgres so you can see how the work actually happened, not just what came out.
 
-Captures every prompt, every sub-agent fan-out, every tool call to a local Postgres database so you can review what you actually did instead of what you thought you did. The goal is monitoring + practice review.
+Two agent runs can produce identical-looking outputs while one took the happy path and the other recovered from three failed WebFetches, fell back to a different source, and got lucky. The outputs look the same. The processes are not. This is the tool that catches that.
 
-Two ways to use it:
+```bash
+cc-logger sessions                                              # what ran recently
+cc-logger inspect <session-id>                                  # one session, full tree
+cc-logger insights --days 7                                     # cross-session patterns
+psql $DATABASE_URL -f queries/13_tool_sequence_conformance.sql  # drift across runs
+```
 
-- **Single-session film room** — `cc-logger inspect <session>` shows the full tree of one run, with Claude's narration interleaved between tool calls.
-- **Multi-run conformance** — when you run the same agent repeatedly, `queries/13` surfaces drift across runs; queries 14 + 15 pinpoint where two specific runs diverged and what Claude was thinking at the branch.
+**Who this is for:**
+
+- **Solo Claude Code users** who want to review their sessions like game film.
+- **Teams and agencies** running the same agent repeatedly across clients or projects, who need to know whether each run is following the canonical path or drifting.
+- **Operators of production agent systems** who want tool-level traces and the ability to compare behavior across runs.
 
 Built on [Claude Code's HTTP hooks](https://docs.claude.com/en/docs/claude-code/hooks) — no patches or modifications to Claude Code itself.
 
