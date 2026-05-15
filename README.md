@@ -4,6 +4,11 @@ A film room for your Claude Code sessions.
 
 Captures every prompt, every sub-agent fan-out, every tool call to a local Postgres database so you can review what you actually did instead of what you thought you did. The goal is monitoring + practice review.
 
+Two ways to use it:
+
+- **Single-session film room** — `cc-logger inspect <session>` shows the full tree of one run, with Claude's narration interleaved between tool calls.
+- **Multi-run conformance** — when you run the same agent repeatedly, `queries/13` surfaces drift across runs; queries 14 + 15 pinpoint where two specific runs diverged and what Claude was thinking at the branch.
+
 Built on [Claude Code's HTTP hooks](https://docs.claude.com/en/docs/claude-code/hooks) — no patches or modifications to Claude Code itself.
 
 ## What you get
@@ -45,6 +50,47 @@ SESSION 94b8ee2b-b51f-4125-a116-82adaf4066af
 ```
 
 `cc-logger insights` adds the cross-session view — power-law distribution of where your time goes, top failure domains, sub-agent fan-out patterns, hourly activity.
+
+## Comparing runs: the conformance loop
+
+The film-room mode is retrospective — watch one session, learn from it, move on. The other mode is **conformance testing**: when you run the same agent repeatedly, are the runs actually doing the same thing?
+
+Two runs of the same agent can produce identical-looking output where one took the happy path and the other recovered from three WebFetch failures, fell back to a different source, and got lucky. The outputs look the same. The processes are not. Conformance testing catches that.
+
+Three queries make up the loop:
+
+```bash
+# 1. Find drift across many runs of similar work
+psql $DATABASE_URL -f queries/13_tool_sequence_conformance.sql
+
+# 2. Diff two specific runs side by side
+psql $DATABASE_URL \
+  -v sid1="'<session-a>'" -v sid2="'<session-b>'" \
+  -f queries/14_compare_two_runs.sql
+
+# 3. Find the branching point + Claude's narration there
+psql $DATABASE_URL \
+  -v sid1="'<session-a>'" -v sid2="'<session-b>'" \
+  -f queries/15_branching_points.sql
+```
+
+Real example from two runs of the same brief-generating agent (35 min / 19 tools vs. 6 min / 13 tools):
+
+```
+=== Branch summary ===
+pos | run_a_tool | run_a_hint                    | run_b_tool | run_b_hint
+  5 | Bash       | ls .../runs/latest-brief.md   | Write      | .../runs/latest-brief.md
+
+=== Narration around the branch (±60s) ===
+RUN-A | 07:15 | "Collection complete. Now I'll read the context and synthesize..."
+RUN-A | 07:16 | "Now I have full context. Let me synthesize and send."
+RUN-A | 07:17 | "Brief is 959 words; hard cap is 800. Trimming."
+RUN-B | 07:52 | "919 words — need to trim under 800. Tightening."
+```
+
+Run A did an extra precautionary `ls` before writing, then spent two minutes on context-reading narration before the first word-count check. Run B was more direct. Same agent, same data, same output — different process. Four rows of diagnostic.
+
+This is the layer that turns a logger into agent QA. If you run the same agent across many clients, projects, or days, query 13 tells you which runs are doing it the canonical way and which are snowflakes. Queries 14 + 15 tell you what changed and why.
 
 ## Quickstart (Docker Compose)
 
@@ -102,8 +148,14 @@ cc-logger insights [--days N]               # cross-session analytics
 
 ## Canned queries
 
-Twelve ready-to-run SQL files in [`queries/`](queries/) for the things you'll keep asking:
+Fifteen ready-to-run SQL files in [`queries/`](queries/).
 
+**The conformance loop** (the differentiated value — see "Comparing runs" above):
+- `13_tool_sequence_conformance.sql` — groups sessions by their root-agent tool sequence to surface drift across repeat runs of the same agent. Modal paths vs. snowflakes.
+- `14_compare_two_runs.sql` — side-by-side diff of two specific sessions, with a `match` column flagging where they did the same thing vs. where they diverged.
+- `15_branching_points.sql` — for two sessions, finds the first position where their tool sequences differ, and pulls Claude's narration (±60s) around that branch.
+
+**Single-session and aggregate analytics:**
 - `01_session_summary.sql` — recent sessions with counts and duration
 - `02_tool_usage.sql` — tool mix and reliability (last 24h)
 - `03_subagent_tree.sql` — sub-agent tree for a session
@@ -116,9 +168,6 @@ Twelve ready-to-run SQL files in [`queries/`](queries/) for the things you'll ke
 - `10_subagent_fanout_distribution.sql` — how often you fan out, and how wide
 - `11_longest_sessions_by_prompt.sql` — which prompts produced the longest sessions
 - `12_error_rates_by_tool.sql` — fail % per tool name
-- `13_tool_sequence_conformance.sql` — **process conformance**: groups sessions by their root-agent tool sequence to surface drift across repeat runs of the same agent. Modal paths vs. snowflakes.
-- `14_compare_two_runs.sql` — side-by-side diff of two specific sessions, with a `match` column flagging where they did the same thing vs. where they diverged.
-- `15_branching_points.sql` — for two sessions, finds the first position where their tool sequences differ, and pulls Claude's narration (±60s) around that branch — the diagnostic "why did they diverge" layer.
 
 ## Schema
 
