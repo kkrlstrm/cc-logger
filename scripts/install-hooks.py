@@ -30,6 +30,7 @@ SIMPLE_EVENTS = (
     "UserPromptSubmit",
     "SubagentStart",
     "SubagentStop",
+    "Stop",
     "SessionEnd",
 )
 TOOL_MATCHERS = ("Agent|Bash|Edit|Write|WebFetch|WebSearch", "mcp__.*")

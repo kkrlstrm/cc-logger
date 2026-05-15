@@ -14,8 +14,9 @@ Official Claude Code hooks documentation: https://code.claude.com/docs/en/hooks.
 | `PostToolUse` | After a tool succeeds. **Filtered**. | Updates the matching `tool_calls` row with the response, `status='success'`, and duration. Spills payloads >50KB to `artifacts`. |
 | `PostToolUseFailure` | When a tool fails. **Filtered**. | Updates the matching `tool_calls` row with `error`, `status='failure'`, duration. |
 | `SubagentStart` | Sub-agent spawned. | Inserts an `agent_invocations` row. Resolves the parent `Agent` tool_call by `subagent_type` match. |
-| `SubagentStop` | Sub-agent finishes. | Updates the matching `agent_invocations` row with `last_message`, `ended_at`, `status='completed'`. |
-| `SessionEnd` | Session ends (exit, logout, kill, etc.). | Updates `sessions.ended_at` + `end_reason`. Sweeps any still-pending `tool_calls` and `agent_invocations` for this session to `orphaned`. |
+| `SubagentStop` | Sub-agent finishes. | Updates the matching `agent_invocations` row with `last_message`, `ended_at`, `status='completed'`. **Also reads the sub-agent's transcript file and ingests `text` blocks into the `messages` table.** |
+| `Stop` | Root agent finishes a turn (one response to one user message). | Reads the root transcript file at `transcript_path`, extracts assistant `text` blocks, INSERTs them into `messages` (idempotent on `message_id` + `block_index`). This is where Claude's mid-process narration lands. |
+| `SessionEnd` | Session ends (exit, logout, kill, etc.). | Updates `sessions.ended_at` + `end_reason`. Sweeps any still-pending `tool_calls` and `agent_invocations` for this session to `orphaned`. Also does a final transcript ingestion pass to catch anything `Stop` missed. |
 
 ## Tool capture allowlist
 
@@ -46,6 +47,17 @@ cc-logger resolves the link by matching on `subagent_type`:
 5. **Zero matches** → both fields stay NULL (logged as a warning).
 
 In practice, Claude Code emits hook events sequentially even when sub-agents execute in parallel, so the multi-candidate case is rare.
+
+## Transcript-based message capture
+
+Hooks don't include Claude's narration text in their payloads — they only fire at action boundaries. To capture the *decisions* Claude is making mid-process (e.g., "I'll start by exploring the project structure..."), cc-logger reads the Claude Code JSONL transcript file at `transcript_path` (a field present in every hook event).
+
+- On `Stop` / `SubagentStop`: incremental ingest, near-realtime
+- On `SessionEnd`: final reconciliation pass
+
+Only `text` blocks are extracted. Claude's `thinking` (extended thinking) blocks are encrypted in the transcript by Anthropic — only a `signature` is present, no plaintext reasoning. This is an API-level choice and not something cc-logger can work around.
+
+Insertion is idempotent (`ON CONFLICT (message_id, block_index) DO NOTHING`), so repeated reads of the same transcript are safe.
 
 ## Hook payload notes
 

@@ -12,7 +12,7 @@ from typing import Any
 from psycopg import AsyncConnection
 from psycopg.types.json import Json
 
-from . import models
+from . import models, transcripts
 from .artifacts import truncate
 from .filters import should_capture
 from .linking import resolve_parent
@@ -247,6 +247,17 @@ async def handle_subagent_stop(conn: AsyncConnection, ev: models.SubagentStop) -
             """,
             (ev.last_message, _now(), ev.agent_id),
         )
+    # Ingest the sub-agent's transcript so its text blocks land in `messages`.
+    await transcripts.ingest(conn, ev.session_id, ev.transcript_path, ev.agent_id)
+
+
+async def handle_stop(conn: AsyncConnection, ev: models.Stop) -> None:
+    """Root agent finished a turn. Ingest the transcript incrementally so
+    Claude's narration / decisions land in `messages` near-realtime.
+    """
+    # Root invocation gets the message rows; root_id is synthesized from session_id.
+    root_id = f"root::{ev.session_id}"
+    await transcripts.ingest(conn, ev.session_id, ev.transcript_path, root_id)
 
 
 async def handle_session_end(conn: AsyncConnection, ev: models.SessionEnd) -> None:
@@ -278,6 +289,9 @@ async def handle_session_end(conn: AsyncConnection, ev: models.SessionEnd) -> No
             """,
             (_now(), ev.session_id),
         )
+    # Final reconciliation pass on the transcript: catch anything Stop missed.
+    root_id = f"root::{ev.session_id}"
+    await transcripts.ingest(conn, ev.session_id, ev.transcript_path, root_id)
 
 
 HANDLERS = {
@@ -288,6 +302,7 @@ HANDLERS = {
     "PostToolUseFailure": handle_post_tool_use_failure,
     "SubagentStart": handle_subagent_start,
     "SubagentStop": handle_subagent_stop,
+    "Stop": handle_stop,
     "SessionEnd": handle_session_end,
 }
 

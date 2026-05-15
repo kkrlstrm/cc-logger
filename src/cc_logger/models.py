@@ -77,6 +77,13 @@ class SubagentStop(HookEnvelope):
     last_message: str | None = None
 
 
+class Stop(HookEnvelope):
+    """Fires when the root agent finishes a turn. We use it to incrementally
+    ingest assistant text blocks from the transcript file."""
+    hook_event_name: Literal["Stop"]
+    stop_hook_active: bool | None = None
+
+
 class SessionEnd(HookEnvelope):
     hook_event_name: Literal["SessionEnd"]
     reason: str | None = None
@@ -91,6 +98,7 @@ HOOK_MODELS: dict[str, type[HookEnvelope]] = {
     "PostToolUseFailure": PostToolUseFailure,
     "SubagentStart": SubagentStart,
     "SubagentStop": SubagentStop,
+    "Stop": Stop,
     "SessionEnd": SessionEnd,
 }
 

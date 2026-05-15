@@ -101,6 +101,22 @@ async def render(session_id: str, file=None) -> None:
             tc_cols = [c.name for c in cur.description]
             tool_calls = [dict(zip(tc_cols, r)) for r in await cur.fetchall()]
 
+            # Pull assistant text blocks (may be empty if Stop hook hasn't run yet)
+            try:
+                await cur.execute(
+                    """
+                    SELECT invocation_id, text, position, created_at
+                    FROM messages WHERE session_id = %s
+                    ORDER BY position
+                    """,
+                    (session_id,),
+                )
+                msg_cols = [c.name for c in cur.description]
+                messages = [dict(zip(msg_cols, r)) for r in await cur.fetchall()]
+            except Exception:
+                # `messages` table may not exist on older installs
+                messages = []
+
     # Header
     print("", file=out)
     print(f"SESSION {session['session_id']}", file=out)
@@ -125,9 +141,29 @@ async def render(session_id: str, file=None) -> None:
     children: dict[str | None, list[dict]] = {}
     for i in invocations:
         children.setdefault(i["parent_invocation_id"], []).append(i)
-    calls_by_inv: dict[str | None, list[dict]] = {}
+
+    # Interleave tool_calls and messages per invocation by timestamp.
+    # tool_calls have started_at; messages have created_at + position (line
+    # number in transcript). We use created_at as the sort key for messages.
+    timeline_by_inv: dict[str | None, list[tuple]] = {}
     for tc in tool_calls:
-        calls_by_inv.setdefault(tc["invocation_id"], []).append(tc)
+        timeline_by_inv.setdefault(tc["invocation_id"], []).append(
+            (tc["started_at"], "tool", tc)
+        )
+    for m in messages:
+        timeline_by_inv.setdefault(m["invocation_id"], []).append(
+            (m["created_at"], "msg", m)
+        )
+    for inv_id in timeline_by_inv:
+        timeline_by_inv[inv_id].sort(key=lambda x: x[0])
+
+    def _fmt_msg(msg: dict, indent: str) -> str:
+        text = msg["text"].strip()
+        # Wrap long lines onto continuation lines for readability
+        first = text[:120].replace("\n", " ")
+        if len(text) > 120:
+            first += "..."
+        return f'{indent}  · {first!r}'
 
     def render_inv(inv: dict, depth: int) -> None:
         indent = "  " * depth
@@ -136,8 +172,11 @@ async def render(session_id: str, file=None) -> None:
             head += f" {inv['agent_id'][:18]}"
         head += f"  {_STATUS_GLYPH.get(inv['status'], '?')}]"
         print(head, file=out)
-        for tc in calls_by_inv.get(inv["invocation_id"], []):
-            print(f"{indent}  {_fmt_tool_summary(tc)}", file=out)
+        for _ts, kind, item in timeline_by_inv.get(inv["invocation_id"], []):
+            if kind == "tool":
+                print(f"{indent}  {_fmt_tool_summary(item)}", file=out)
+            else:
+                print(_fmt_msg(item, indent), file=out)
         for child in children.get(inv["invocation_id"], []):
             render_inv(child, depth + 1)
         if inv.get("last_message"):
@@ -151,9 +190,10 @@ async def render(session_id: str, file=None) -> None:
     n_fail = sum(1 for t in tool_calls if t["status"] == "failure")
     n_pend = sum(1 for t in tool_calls if t["status"] == "pending")
     n_subs = sum(1 for i in invocations if i["parent_invocation_id"])
+    n_msgs = len(messages)
     print("", file=out)
     print(f"  {len(invocations)} invocations ({n_subs} sub-agents), {n_tools} tool calls "
-          f"({n_fail} failed, {n_pend} pending)", file=out)
+          f"({n_fail} failed, {n_pend} pending), {n_msgs} text blocks", file=out)
 
 
 def run(session_id: str) -> None:

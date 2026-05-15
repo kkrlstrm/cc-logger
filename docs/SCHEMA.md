@@ -53,6 +53,24 @@ cc-logger writes to 4 tables. The full DDL is in [`migrations/001_initial_schema
 | `started_at` | TIMESTAMPTZ | When PreToolUse fired. |
 | `received_at` | TIMESTAMPTZ | When the worker actually processed the event. Difference shows async queue lag. |
 
+## `messages` — assistant text blocks (Claude's narration)
+
+Populated by reading the Claude Code transcript JSONL at `Stop` / `SubagentStop` / `SessionEnd`. Only `text` blocks are captured; Claude's `thinking` blocks are encrypted in the transcript (signature only, no plaintext) and we can't extract them.
+
+| column | type | notes |
+|---|---|---|
+| `message_id` | TEXT | Anthropic message UUID from the transcript. |
+| `block_index` | INTEGER | Position of the text block within the message's `content` array. PK is composite (`message_id`, `block_index`). |
+| `session_id` | TEXT FK | References `sessions(session_id)`. |
+| `invocation_id` | TEXT FK | The agent that produced the message (root or sub-agent). |
+| `role` | TEXT | `assistant` (we only capture assistant text). |
+| `block_type` | TEXT | `text` (we only capture text blocks). |
+| `text` | TEXT | The text Claude said, after redaction. |
+| `position` | INTEGER | Line number in the source JSONL — gives a stable in-transcript ordering. |
+| `created_at` | TIMESTAMPTZ | When the row was inserted. |
+
+Indexed on `(session_id, position)` and `(invocation_id)`.
+
 ## `artifacts` — overflow for any field >50KB
 
 | column | type | notes |

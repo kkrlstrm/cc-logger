@@ -19,15 +19,21 @@ SESSION 94b8ee2b-b51f-4125-a116-82adaf4066af
            and propose which personas are reachable in each week of June-August.'
 
   [root  completed]
+    · 'I'll start by pulling the campaign performance and matching it against
+       district fiscal data, then fan out to verify against state sources.'
     Bash       'glab api "groups/12345/projects?search=accounts"'              3.0s  ok
     Bash       'psql ... -c "SELECT campaign, replies FROM eb_campaigns ..."'  2.0s  ok
     Bash       'ls /Users/me/Downloads/k12-district-fiscal-sustainability'      0ms  ok
+    · 'Got the baseline. Now I'll spawn three sub-agents in parallel: one for
+       NY state data, one for Ohio, one for the cross-state academic calendar.'
     Agent      'Map district fiscal sustainability data'                       38s   ok
       [general-purpose ab72bd109071caf  completed]
+        · 'Searching state Comptroller / Auditor databases for fiscal-stress designations.'
         WebSearch  'K-12 district fiscal stress New York Comptroller 2024 2025'  5.9s  ok
         WebFetch   'https://www.osc.ny.gov/state-agencies/audits/fiscal-stress'  8.2s  ok
         WebSearch  'Ohio Auditor school district fiscal distress 2024'          6.1s  ok
         WebFetch   'https://ohioauditor.gov/auditsearch/Reports/2024'           64s   FAIL
+        · 'Ohio Auditor blocked the fetch. Falling back to Comptroller summary.'
         ... 47 more tool calls
         → 'Found 31 districts in NY designated fiscal stress, 12 in OH...'
     Agent      'Cross-reference academic calendars by state'                  5m 55s ok
@@ -35,7 +41,7 @@ SESSION 94b8ee2b-b51f-4125-a116-82adaf4066af
         ... 64 tool calls
     ... 7 more sub-agents
 
-  10 invocations (9 sub-agents), 556 tool calls (24 failed, 0 pending)
+  10 invocations (9 sub-agents), 556 tool calls (24 failed, 0 pending), 142 text blocks
 ```
 
 `cc-logger insights` adds the cross-session view — power-law distribution of where your time goes, top failure domains, sub-agent fan-out patterns, hourly activity.
@@ -74,6 +80,7 @@ python scripts/install-hooks.py     # wires the Claude Code hooks
 - Every sub-agent invocation (root + children, with linkage to the spawning `Agent` tool call)
 - Every tool call in the capture allowlist (Agent, Bash, Edit, Write, WebFetch, WebSearch, and `mcp__.*`)
 - Tool input + tool response payloads as JSONB; anything >50KB spills to a separate `artifacts` table
+- **Claude's text narration between tool calls** — read from the Claude Code transcript file at every `Stop` / `SubagentStop`, stored in the `messages` table. (Extended `thinking` blocks are encrypted by Anthropic — only `text` blocks are capturable.)
 - Optional regex redaction of common secret patterns before write (on by default)
 
 ## Privacy

@@ -1,0 +1,125 @@
+"""Read Claude Code transcript JSONL files and extract assistant text blocks.
+
+Claude Code writes a JSONL file per session at the `transcript_path` given
+in every hook payload. Each line is one message: `user`, `assistant`,
+`tool_result`, or various Claude-Code-internal types. Assistant messages
+contain a `content` list of blocks: `text`, `thinking`, `tool_use`, etc.
+
+We extract:
+    - `text` blocks: Claude's narration / decisions. Plaintext.
+
+We do NOT extract:
+    - `thinking` blocks: encrypted in the transcript (only `signature` is
+      present, no plaintext). Anthropic doesn't expose raw reasoning to
+      client apps.
+    - `tool_use` blocks: already captured via PreToolUse hooks.
+    - User / tool_result messages: not assistant decisions.
+
+Insert behavior is idempotent (PK = message_id + block_index, ON CONFLICT
+DO NOTHING). Calling this multiple times for the same transcript is safe.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Iterator
+
+from psycopg import AsyncConnection
+
+from .redaction import redact_string
+
+log = logging.getLogger("cc_logger.transcripts")
+
+
+def _iter_text_blocks(transcript_path: Path) -> Iterator[dict]:
+    """Yield {message_id, block_index, text, position} for every text
+    block in every assistant message in the JSONL."""
+    position = 0
+    with open(transcript_path) as f:
+        for line in f:
+            position += 1
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                m = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if m.get("type") != "assistant":
+                continue
+            msg = m.get("message") or {}
+            content = msg.get("content") or []
+            if not isinstance(content, list):
+                continue
+            message_id = msg.get("id") or m.get("uuid") or m.get("messageId")
+            if not message_id:
+                continue
+            for idx, block in enumerate(content):
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") != "text":
+                    continue
+                text = block.get("text") or ""
+                if not text.strip():
+                    continue
+                yield {
+                    "message_id": str(message_id),
+                    "block_index": idx,
+                    "text": text,
+                    "position": position,
+                }
+
+
+async def ingest(
+    conn: AsyncConnection,
+    session_id: str,
+    transcript_path: str | None,
+    invocation_id: str | None = None,
+) -> int:
+    """Read the transcript at `transcript_path` and INSERT any text blocks
+    not already present. Returns the number of rows newly inserted.
+
+    Best-effort: if the file is missing or unreadable, logs a warning and
+    returns 0. The capture pipeline shouldn't crash because of a missing
+    transcript.
+    """
+    if not transcript_path:
+        return 0
+    p = Path(transcript_path)
+    if not p.exists():
+        log.warning("transcript file not found: %s", p)
+        return 0
+
+    inserted = 0
+    redact_enabled = os.getenv("REDACT_SECRETS", "1") not in ("0", "false", "no")
+
+    async with conn.cursor() as cur:
+        for block in _iter_text_blocks(p):
+            text = block["text"]
+            if redact_enabled:
+                text = redact_string(text)
+            await cur.execute(
+                """
+                INSERT INTO messages
+                    (message_id, block_index, session_id, invocation_id,
+                     role, block_type, text, position)
+                VALUES (%s, %s, %s, %s, 'assistant', 'text', %s, %s)
+                ON CONFLICT (message_id, block_index) DO NOTHING
+                """,
+                (
+                    block["message_id"],
+                    block["block_index"],
+                    session_id,
+                    invocation_id,
+                    text,
+                    block["position"],
+                ),
+            )
+            if cur.rowcount:
+                inserted += 1
+
+    if inserted:
+        log.info("ingested %d new text blocks from %s", inserted, p.name)
+    return inserted
