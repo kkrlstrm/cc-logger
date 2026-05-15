@@ -117,6 +117,8 @@ Twelve ready-to-run SQL files in [`queries/`](queries/) for the things you'll ke
 - `11_longest_sessions_by_prompt.sql` — which prompts produced the longest sessions
 - `12_error_rates_by_tool.sql` — fail % per tool name
 - `13_tool_sequence_conformance.sql` — **process conformance**: groups sessions by their root-agent tool sequence to surface drift across repeat runs of the same agent. Modal paths vs. snowflakes.
+- `14_compare_two_runs.sql` — side-by-side diff of two specific sessions, with a `match` column flagging where they did the same thing vs. where they diverged.
+- `15_branching_points.sql` — for two sessions, finds the first position where their tool sequences differ, and pulls Claude's narration (±60s) around that branch — the diagnostic "why did they diverge" layer.
 
 ## Schema
 
