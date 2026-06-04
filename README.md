@@ -1,8 +1,8 @@
 # cc-logger
 
-**Agent QA for Claude Code.** Replay sessions like game film, trace every sub-agent and tool call, and compare repeated runs to catch workflow drift. Captures every prompt, sub-agent, tool call, and Claude's narration between them into Postgres so you can see how the work actually happened, not just what came out.
+**Agent QA infrastructure for Claude Code workflows.** Replay, inspect, and compare agent runs so repeated workflows don't silently drift. cc-logger captures every prompt, sub-agent, tool call, and Claude's narration in between into Postgres — so you can see how the work actually happened, not just what came out, and turn your own usage into data you can optimize against.
 
-Two agent runs can produce identical-looking outputs while one took the happy path and the other recovered from three failed WebFetches, fell back to a different source, and got lucky. The outputs look the same. The processes are not. This is the tool that catches that.
+Two runs of the same workflow can produce identical-looking output while one took the happy path and the other recovered from three failed WebFetches, fell back to a different source, and got lucky. The outputs match. The processes don't. cc-logger is the layer that catches that.
 
 ```bash
 cc-logger sessions                                              # what ran recently
@@ -11,10 +11,18 @@ cc-logger insights --days 7                                     # cross-session 
 psql $DATABASE_URL -f queries/13_tool_sequence_conformance.sql  # drift across runs
 ```
 
+**What it's good for:**
+
+- **See what you actually do, not what you think you do.** Your repo shows what's *possible*; your logs show your real workload — which tools, how often, where the time and the failures go. That's the surface you optimize against.
+- **Catch workflow drift.** Run the same agent across many clients or days and know which runs took the canonical path and which are snowflakes — before the snowflake turns out to be the one that mattered.
+- **Turn sub-agent runs into specs.** Every sub-agent fan-out is recorded (most setups drop these entirely). The worker prompt you keep re-typing is, almost verbatim, the definition for a reusable sub-agent.
+- **Compare models on real work.** Every run is tagged with the model that ran it, so you can slice one model version against another on the same kind of task instead of trusting a single impressive session.
+- **Decide what to make deterministic.** The same API/DB/parsing glue, re-improvised every session, shows up as a pattern — the signal that it should be a script, not an LLM call.
+
 **Who this is for:**
 
-- **Solo Claude Code users** who want to review their sessions like game film.
-- **Teams and agencies** running the same agent repeatedly across clients or projects, who need to know whether each run is following the canonical path or drifting.
+- **Solo Claude Code users** reviewing their own sessions like game film.
+- **Teams and agencies** running the same agent across clients or projects, who need to know whether each run is following the canonical path or drifting.
 - **Operators of production agent systems** who want tool-level traces and the ability to compare behavior across runs.
 
 Built on [Claude Code's HTTP hooks](https://docs.claude.com/en/docs/claude-code/hooks) — no patches or modifications to Claude Code itself.
@@ -26,6 +34,7 @@ Run a Claude Code session, then `cc-logger inspect <session-id>` shows you the f
 ```
 SESSION 94b8ee2b-b51f-4125-a116-82adaf4066af
   started 2026-05-13 11:55  ended 2026-05-13 20:08  (8h 13m)
+  model: claude-opus-4-8
   end_reason: exit
   prompt: 'Look into our top accounts and brainstorm a summer outreach strategy.
            Map district fiscal sustainability against state academic calendars
@@ -61,11 +70,7 @@ SESSION 94b8ee2b-b51f-4125-a116-82adaf4066af
 
 ## Comparing runs: the conformance loop
 
-The film-room mode is retrospective — watch one session, learn from it, move on. The other mode is **conformance testing**: when you run the same agent repeatedly, are the runs actually doing the same thing?
-
-Two runs of the same agent can produce identical-looking output where one took the happy path and the other recovered from three WebFetch failures, fell back to a different source, and got lucky. The outputs look the same. The processes are not. Conformance testing catches that.
-
-Three queries make up the loop:
+The film-room mode is retrospective — watch one session, learn from it, move on. The other mode is **conformance testing**: when you run the same agent repeatedly, are the runs actually doing the same thing? Same input, same output, different process is exactly the failure that ships unnoticed — three queries make the process visible:
 
 ```bash
 # 1. Find drift across many runs of similar work
