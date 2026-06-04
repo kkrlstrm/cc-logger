@@ -33,19 +33,35 @@ def cmd_serve(args: argparse.Namespace) -> None:
     )
 
 
+_MIGRATIONS = [
+    ("schema", "001_initial_schema.py"),   # tables + indexes
+    ("views", "002_views.py"),             # vw_* analytics views
+    ("messages", "003_messages.py"),       # narration table (needed by `inspect`)
+]
+
+
 def cmd_migrate(args: argparse.Namespace) -> None:
     import subprocess
 
-    if args.views:
-        script = _ROOT / "migrations" / "002_views.py"
+    # By default apply/verify ALL migrations in order. The full set is required:
+    # `inspect` and the conformance queries read the `messages` table (003) and
+    # the `vw_*` views (002), so running only 001 leaves the headline features
+    # broken. `--only` runs a single step; `--views` is kept as a legacy alias.
+    if args.only:
+        steps = [s for s in _MIGRATIONS if s[0] == args.only]
+    elif args.views:
+        steps = [s for s in _MIGRATIONS if s[0] == "views"]
     else:
-        script = _ROOT / "migrations" / "001_initial_schema.py"
-    cmd = [sys.executable, str(script)]
-    if args.apply:
-        cmd.append("--apply")
-    elif args.verify:
-        cmd.append("--verify")
-    subprocess.run(cmd, check=True)
+        steps = _MIGRATIONS
+
+    action = "--apply" if args.apply else ("--verify" if args.verify else None)
+    for label, script_name in steps:
+        script = _ROOT / "migrations" / script_name
+        print(f"→ migrate [{label}] {script_name}")
+        cmd = [sys.executable, str(script)]
+        if action:
+            cmd.append(action)
+        subprocess.run(cmd, check=True)
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:
@@ -71,11 +87,14 @@ def main() -> None:
     p_serve.add_argument("--reload", action="store_true", help="auto-reload on code change (dev)")
     p_serve.set_defaults(func=cmd_serve)
 
-    p_mig = sub.add_parser("migrate", help="apply/verify schema")
+    p_mig = sub.add_parser("migrate", help="apply/verify schema (all migrations by default)")
     g = p_mig.add_mutually_exclusive_group()
     g.add_argument("--apply", action="store_true")
     g.add_argument("--verify", action="store_true")
-    p_mig.add_argument("--views", action="store_true", help="run 002_views.py instead of 001_initial_schema.py")
+    p_mig.add_argument("--only", choices=[s[0] for s in _MIGRATIONS],
+                       help="run a single migration step (schema|views|messages)")
+    p_mig.add_argument("--views", action="store_true",
+                       help="legacy alias for --only views")
     p_mig.set_defaults(func=cmd_migrate)
 
     p_ses = sub.add_parser("sessions", help="list recent sessions")

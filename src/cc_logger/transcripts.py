@@ -45,6 +45,35 @@ def _parse_ts(value: str | None) -> datetime | None:
         return None
 
 
+def _scan_model(transcript_path: Path) -> str | None:
+    """Return the model that actually ran this transcript — the most frequent
+    assistant `message.model` across the file.
+
+    Claude Code's SessionStart hook frequently omits the model, leaving
+    `sessions.model` NULL, which breaks model-vs-model comparison. The transcript
+    records the real model on every assistant line, so it's the reliable source.
+    """
+    counts: dict[str, int] = {}
+    try:
+        with open(transcript_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    m = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if m.get("type") != "assistant":
+                    continue
+                model = (m.get("message") or {}).get("model")
+                if isinstance(model, str) and model and model != "<synthetic>":
+                    counts[model] = counts.get(model, 0) + 1
+    except OSError:
+        return None
+    return max(counts, key=counts.get) if counts else None
+
+
 def _iter_text_blocks(transcript_path: Path) -> Iterator[dict]:
     """Yield {message_id, block_index, text, position, created_at} for every
     text block in every assistant message in the JSONL.
@@ -141,6 +170,25 @@ async def ingest(
             )
             if cur.rowcount:
                 inserted += 1
+
+        # Backfill the model that actually ran, from the transcript. For the
+        # root transcript this sets sessions.model; for a sub-agent transcript
+        # it sets that invocation's model. Only fills/corrects, never clobbers
+        # with NULL.
+        model = _scan_model(p)
+        if model:
+            if invocation_id is None:
+                await cur.execute(
+                    "UPDATE sessions SET model = %s "
+                    "WHERE session_id = %s AND model IS DISTINCT FROM %s",
+                    (model, session_id, model),
+                )
+            else:
+                await cur.execute(
+                    "UPDATE agent_invocations SET model = %s "
+                    "WHERE invocation_id = %s AND model IS DISTINCT FROM %s",
+                    (model, invocation_id, model),
+                )
 
     if inserted:
         log.info("ingested %d new text blocks from %s", inserted, p.name)

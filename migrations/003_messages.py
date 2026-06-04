@@ -61,6 +61,8 @@ def get_dsn() -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--verify", action="store_true",
+                    help="report the table this migration manages (no changes)")
     args = ap.parse_args()
     dsn = get_dsn()
 

@@ -1,6 +1,6 @@
 # cc-logger — local Postgres + capture service
 # Usage: docker compose up -d
-# Then: docker compose exec cc-logger python migrations/001_initial_schema.py --apply
+# Then: docker compose exec cc-logger python -m cc_logger.cli migrate --apply
 
 services:
   postgres:

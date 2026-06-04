@@ -1,6 +1,6 @@
 # Schema reference
 
-cc-logger writes to 4 tables. The full DDL is in [`migrations/001_initial_schema.py`](../migrations/001_initial_schema.py). Analytical views are in [`migrations/002_views.py`](../migrations/002_views.py).
+cc-logger writes to 5 tables (`sessions`, `agent_invocations`, `tool_calls`, `artifacts`, `messages`). Core DDL is in [`migrations/001_initial_schema.py`](../migrations/001_initial_schema.py), analytical views in [`migrations/002_views.py`](../migrations/002_views.py), and the `messages` (narration) table in [`migrations/003_messages.py`](../migrations/003_messages.py). Apply all of them at once with `cc-logger migrate --apply`.
 
 ## `sessions` — one row per Claude Code session
 
@@ -10,7 +10,7 @@ cc-logger writes to 4 tables. The full DDL is in [`migrations/001_initial_schema
 | `started_at` | TIMESTAMPTZ | When SessionStart fired. |
 | `ended_at` | TIMESTAMPTZ | When SessionEnd fired (NULL if session is still open). |
 | `cwd` | TEXT | Working directory at session start. |
-| `model` | TEXT | Model in use (if Claude Code reports it). May be NULL. |
+| `model` | TEXT | The model that ran the session. Backfilled from the transcript at `Stop`/`SessionEnd` (most-frequent assistant model), since Claude Code's SessionStart hook often omits it. |
 | `initial_prompt` | TEXT | First UserPromptSubmit content. |
 | `end_reason` | TEXT | "exit", "logout", etc. |
 | `total_tokens` | BIGINT | If reported on SessionEnd. |
@@ -28,7 +28,7 @@ cc-logger writes to 4 tables. The full DDL is in [`migrations/001_initial_schema
 | `candidate_parent_tool_call_ids` | JSONB | When linking is ambiguous (parallel fan-out with same agent_type), all candidate parent IDs. |
 | `agent_id` | TEXT | Claude Code's `agent_id`. NULL for root. |
 | `agent_type` | TEXT | "root" for the root, otherwise the sub-agent type (e.g., "general-purpose", "Explore"). |
-| `model` | TEXT | If available. |
+| `model` | TEXT | The model that ran this sub-agent. Backfilled from the sub-agent's transcript at `SubagentStop`. |
 | `prompt_received` | TEXT | The prompt this sub-agent was spawned with. |
 | `last_message` | TEXT | Final message before SubagentStop. |
 | `started_at` | TIMESTAMPTZ | When SubagentStart fired (or session start for root). |

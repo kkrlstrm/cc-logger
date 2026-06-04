@@ -108,8 +108,8 @@ cd cc-logger
 cp .env.example .env                # defaults work for local Docker setup
 docker compose up -d                # boots Postgres + cc-logger
 
-# Migrate schema
-docker compose exec cc-logger python migrations/001_initial_schema.py --apply
+# Migrate schema — tables + analytics views + narration table (all of it)
+docker compose exec cc-logger python -m cc_logger.cli migrate --apply
 
 # Wire Claude Code hooks (merges into ~/.claude/settings.json with a backup)
 python scripts/install-hooks.py
@@ -123,7 +123,7 @@ docker compose exec cc-logger python -m cc_logger.cli sessions
 ```bash
 uv sync
 # Put a Postgres connection string in .env (Neon, Supabase, RDS, local install — anything)
-uv run python migrations/001_initial_schema.py --apply
+uv run cc-logger migrate --apply     # applies all migrations: tables, views, narration table
 ./scripts/install.sh                # installs launchd (macOS) or systemd (Linux) auto-start
 python scripts/install-hooks.py     # wires the Claude Code hooks
 ```
