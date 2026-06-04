@@ -1,3 +1,5 @@
+# Copyright (C) 2026 Kai Karlstrom
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Pydantic models for Claude Code hook event payloads.
 
 We accept a permissive base envelope (extra=allow) because Claude Code

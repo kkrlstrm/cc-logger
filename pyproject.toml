@@ -7,9 +7,12 @@ name = "cc-logger"
 version = "0.1.0"
 description = "Local observability for Claude Code: captures sessions, sub-agents, and tool calls to Postgres."
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "Kai Karlstrom" }]
 requires-python = ">=3.11"
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+]
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",

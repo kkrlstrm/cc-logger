@@ -183,4 +183,10 @@ Five tables: `sessions`, `agent_invocations`, `tool_calls`, `artifacts`, `messag
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[GNU AGPL-3.0-or-later](LICENSE). cc-logger is free software: use, modify, and
+self-host it freely. The copyleft terms mean that if you modify cc-logger and
+make it available to others — including over a network (e.g. as a hosted
+service) — you must release your modified source under the same license.
+
+Copyright (C) 2026 Kai Karlstrom. For commercial licensing outside the AGPL
+terms, open an issue to discuss.

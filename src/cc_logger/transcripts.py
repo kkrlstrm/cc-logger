@@ -1,3 +1,5 @@
+# Copyright (C) 2026 Kai Karlstrom
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Read Claude Code transcript JSONL files and extract assistant text blocks.
 
 Claude Code writes a JSONL file per session at the `transcript_path` given

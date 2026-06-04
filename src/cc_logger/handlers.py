@@ -1,3 +1,5 @@
+# Copyright (C) 2026 Kai Karlstrom
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """One async function per hook_event_name. Each takes a parsed event + a DB
 connection and performs the appropriate INSERT/UPDATE.
 """

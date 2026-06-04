@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Kai Karlstrom
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Migration 002: Analytical views.
 
 Creates Postgres views that make common questions one-line SELECTs instead

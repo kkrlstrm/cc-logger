@@ -1,3 +1,5 @@
+# Copyright (C) 2026 Kai Karlstrom
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Cross-session analytics: power-law distribution, peak hours, repeat-fail
 domains, tool mix breakdown, root vs sub-agent split.
 

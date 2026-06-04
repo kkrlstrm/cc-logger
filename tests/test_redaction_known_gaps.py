@@ -1,3 +1,5 @@
+# Copyright (C) 2026 Kai Karlstrom
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Known false-negatives in the redaction layer.
 
 Each test below documents a real-world string that SHOULD be redacted but

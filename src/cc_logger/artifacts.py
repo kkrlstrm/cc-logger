@@ -1,3 +1,5 @@
+# Copyright (C) 2026 Kai Karlstrom
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Secret redaction + 50KB-per-field truncation with spillover into `artifacts`.
 
 Two-step pipeline applied to tool_input/tool_response BEFORE write:

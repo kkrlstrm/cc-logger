@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Kai Karlstrom
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Install (or uninstall) cc-logger HTTP hooks in ~/.claude/settings.json.
 
 Performs a deep merge: existing hooks for OTHER events are preserved; existing

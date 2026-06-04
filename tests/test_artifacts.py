@@ -1,3 +1,5 @@
+# Copyright (C) 2026 Kai Karlstrom
+# SPDX-License-Identifier: AGPL-3.0-or-later
 import pytest
 
 from cc_logger.artifacts import truncate, MAX_FIELD_BYTES
