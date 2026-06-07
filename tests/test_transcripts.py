@@ -8,7 +8,7 @@ JSONL-parsing logic.
 import json
 from pathlib import Path
 
-from cc_logger.transcripts import _iter_text_blocks
+from cc_logger.transcripts import _iter_text_blocks, scan_transcript_stats
 
 
 def _write_transcript(tmp_path: Path, messages: list[dict]) -> Path:
@@ -164,3 +164,80 @@ def test_position_tracks_line_number(tmp_path):
     blocks = list(_iter_text_blocks(p))
     assert blocks[0]["position"] == 2
     assert blocks[1]["position"] == 4
+
+
+# --- scan_transcript_stats: model + token recovery -------------------------
+# Neither the model nor token totals come from the hook stream reliably, so
+# these are derived from the transcript. Each assistant message carries usage
+# for its own API call; summing across messages = what was billed.
+
+def _assistant_usage(model, usage):
+    return {"type": "assistant", "message": {"model": model, "usage": usage}}
+
+
+def test_stats_sums_usage_across_messages(tmp_path):
+    p = _write_transcript(tmp_path, [
+        {"type": "user", "message": {"id": "u", "content": []}},
+        _assistant_usage("claude-opus-4-8", {
+            "input_tokens": 10, "output_tokens": 100,
+            "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 5,
+        }),
+        _assistant_usage("claude-opus-4-8", {
+            "input_tokens": 20, "output_tokens": 200,
+            "cache_read_input_tokens": 2000, "cache_creation_input_tokens": 0,
+        }),
+    ])
+    stats = scan_transcript_stats(p)
+    assert stats["model"] == "claude-opus-4-8"
+    assert stats["input_tokens"] == 30
+    assert stats["output_tokens"] == 300
+    assert stats["cache_read_tokens"] == 3000
+    assert stats["cache_creation_tokens"] == 5
+    assert stats["total_tokens"] == 30 + 300 + 3000 + 5
+    assert stats["assistant_messages"] == 2
+
+
+def test_stats_model_is_modal_not_last(tmp_path):
+    p = _write_transcript(tmp_path, [
+        _assistant_usage("claude-opus-4-8", {"output_tokens": 1}),
+        _assistant_usage("claude-opus-4-8", {"output_tokens": 1}),
+        _assistant_usage("claude-sonnet-4-6", {"output_tokens": 1}),
+    ])
+    assert scan_transcript_stats(p)["model"] == "claude-opus-4-8"
+
+
+def test_stats_ignores_synthetic_model_but_counts_usage(tmp_path):
+    p = _write_transcript(tmp_path, [
+        _assistant_usage("<synthetic>", {"output_tokens": 7}),
+    ])
+    stats = scan_transcript_stats(p)
+    assert stats["model"] is None
+    assert stats["output_tokens"] == 7
+
+
+def test_stats_missing_usage_keys_default_zero(tmp_path):
+    p = _write_transcript(tmp_path, [
+        _assistant_usage("claude-opus-4-8", {"output_tokens": 5}),
+    ])
+    stats = scan_transcript_stats(p)
+    assert stats["input_tokens"] == 0
+    assert stats["cache_read_tokens"] == 0
+    assert stats["total_tokens"] == 5
+
+
+def test_stats_none_on_missing_file(tmp_path):
+    assert scan_transcript_stats(tmp_path / "nope.jsonl") is None
+
+
+def test_stats_none_when_no_assistant_messages(tmp_path):
+    p = _write_transcript(tmp_path, [{"type": "user", "message": {"id": "u", "content": []}}])
+    assert scan_transcript_stats(p) is None
+
+
+def test_stats_skips_malformed_lines(tmp_path):
+    p = tmp_path / "transcript.jsonl"
+    p.write_text(
+        '{"bad json\n'
+        + json.dumps(_assistant_usage("claude-opus-4-8", {"output_tokens": 42})) + "\n"
+    )
+    assert scan_transcript_stats(p)["output_tokens"] == 42

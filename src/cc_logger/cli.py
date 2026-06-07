@@ -8,6 +8,7 @@ Subcommands:
     sessions  -- list recent sessions
     inspect   -- render a single session as a tree
     insights  -- cross-session analytics over the last N days
+    rate      -- attach a 1-5 self-rating + retro note to a session
 """
 from __future__ import annotations
 
@@ -35,9 +36,14 @@ def cmd_serve(args: argparse.Namespace) -> None:
     )
 
 
+# Run order is defined by this list, NOT the filename numbers. 004 (additive
+# token columns) must run before 002, because vw_session_summary references
+# those columns — so the additive ALTERs are sequenced right after the base
+# schema they extend.
 _MIGRATIONS = [
     ("schema", "001_initial_schema.py"),   # tables + indexes
-    ("views", "002_views.py"),             # vw_* analytics views
+    ("tokens", "004_tokens.py"),           # token-usage columns (recovered from transcripts)
+    ("views", "002_views.py"),             # vw_* analytics views (reads token columns)
     ("messages", "003_messages.py"),       # narration table (needed by `inspect`)
 ]
 
@@ -81,6 +87,11 @@ def cmd_insights(args: argparse.Namespace) -> None:
     insights.run_insights(args.days)
 
 
+def cmd_rate(args: argparse.Namespace) -> None:
+    from . import insights
+    insights.run_rate(args.session_id, args.rating, args.note)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="cc-logger")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -110,6 +121,12 @@ def main() -> None:
     p_in = sub.add_parser("insights", help="cross-session analytics")
     p_in.add_argument("--days", type=int, default=30)
     p_in.set_defaults(func=cmd_insights)
+
+    p_rate = sub.add_parser("rate", help="rate a session 1-5 with an optional retro note")
+    p_rate.add_argument("session_id", help="session id or a unique prefix")
+    p_rate.add_argument("rating", type=int, choices=range(1, 6), metavar="{1-5}")
+    p_rate.add_argument("--note", help="freeform retrospective note")
+    p_rate.set_defaults(func=cmd_rate)
 
     args = parser.parse_args()
     args.func(args)

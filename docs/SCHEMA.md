@@ -1,6 +1,8 @@
 # Schema reference
 
-cc-logger writes to 5 tables (`sessions`, `agent_invocations`, `tool_calls`, `artifacts`, `messages`). Core DDL is in [`migrations/001_initial_schema.py`](../migrations/001_initial_schema.py), analytical views in [`migrations/002_views.py`](../migrations/002_views.py), and the `messages` (narration) table in [`migrations/003_messages.py`](../migrations/003_messages.py). Apply all of them at once with `cc-logger migrate --apply`.
+cc-logger writes to 5 tables (`sessions`, `agent_invocations`, `tool_calls`, `artifacts`, `messages`). Core DDL is in [`migrations/001_initial_schema.py`](../migrations/001_initial_schema.py), token-usage columns in [`migrations/004_tokens.py`](../migrations/004_tokens.py), analytical views in [`migrations/002_views.py`](../migrations/002_views.py), and the `messages` (narration) table in [`migrations/003_messages.py`](../migrations/003_messages.py). Apply all of them at once with `cc-logger migrate --apply` (run order is defined by the list in the CLI, not the filename numbers — 004 runs before 002 because the views read its columns).
+
+> **Where model and tokens come from.** Neither is reliably available from the hook stream — Claude Code's `SessionStart` hook frequently omits the model, and **no** hook event carries token totals (`SessionEnd` reports only a `reason`). Both are instead recovered from the transcript JSONL, where every assistant line records `message.model` and a `message.usage` block. cc-logger sums them in `transcripts.scan_transcript_stats` during the same transcript read it already does for narration. Existing rows can be repopulated with [`scripts/backfill-tokens-model.py`](../scripts/backfill-tokens-model.py).
 
 ## `sessions` — one row per Claude Code session
 
@@ -10,12 +12,13 @@ cc-logger writes to 5 tables (`sessions`, `agent_invocations`, `tool_calls`, `ar
 | `started_at` | TIMESTAMPTZ | When SessionStart fired. |
 | `ended_at` | TIMESTAMPTZ | When SessionEnd fired (NULL if session is still open). |
 | `cwd` | TEXT | Working directory at session start. |
-| `model` | TEXT | The model that ran the session. Backfilled from the transcript at `Stop`/`SessionEnd` (most-frequent assistant model), since Claude Code's SessionStart hook often omits it. |
+| `model` | TEXT | The model that ran the session (most-frequent assistant model in the root transcript). Recovered from the transcript at `Stop`/`SessionEnd`, since the SessionStart hook often omits it. |
 | `initial_prompt` | TEXT | First UserPromptSubmit content. |
 | `end_reason` | TEXT | "exit", "logout", etc. |
-| `total_tokens` | BIGINT | If reported on SessionEnd. |
-| `self_rating` | SMALLINT (1-5) | You fill this in later for retrospectives. |
-| `retro_note` | TEXT | Free-form notes for retros. |
+| `input_tokens` / `output_tokens` / `cache_read_tokens` / `cache_creation_tokens` | BIGINT | Token usage summed across **all** the session's invocations (root + every sub-agent), recomputed from the transcript on each ingest. |
+| `total_tokens` | BIGINT | Sum of the four columns above. (Originally meant to come from `SessionEnd`, but that hook carries no token data — it's now derived from the transcript.) |
+| `self_rating` | SMALLINT (1-5) | Retrospective rating. Set with `cc-logger rate <session> <1-5>`. |
+| `retro_note` | TEXT | Free-form retro note. Set with `cc-logger rate … --note "…"`. |
 
 ## `agent_invocations` — one row per agent (root + every sub-agent)
 
@@ -28,9 +31,10 @@ cc-logger writes to 5 tables (`sessions`, `agent_invocations`, `tool_calls`, `ar
 | `candidate_parent_tool_call_ids` | JSONB | When linking is ambiguous (parallel fan-out with same agent_type), all candidate parent IDs. |
 | `agent_id` | TEXT | Claude Code's `agent_id`. NULL for root. |
 | `agent_type` | TEXT | "root" for the root, otherwise the sub-agent type (e.g., "general-purpose", "Explore"). |
-| `model` | TEXT | The model that ran this sub-agent. Backfilled from the sub-agent's transcript at `SubagentStop`. |
+| `model` | TEXT | The model that ran this invocation. For sub-agents, recovered from the sub-agent's transcript at `SubagentStop`; for the root, from the root transcript. |
 | `prompt_received` | TEXT | The prompt this sub-agent was spawned with. |
 | `last_message` | TEXT | Final message before SubagentStop. |
+| `input_tokens` / `output_tokens` / `cache_read_tokens` / `cache_creation_tokens` / `total_tokens` | BIGINT | Per-invocation token usage summed from this invocation's own transcript. The session's totals are the sum of these across its invocations. |
 | `started_at` | TIMESTAMPTZ | When SubagentStart fired (or session start for root). |
 | `ended_at` | TIMESTAMPTZ | When SubagentStop fired. |
 | `status` | TEXT | `pending` \| `completed` \| `orphaned`. |
@@ -85,7 +89,7 @@ Indexed on `(session_id, position)` and `(invocation_id)`.
 
 | view | what it shows |
 |---|---|
-| `vw_session_summary` | One row per session with tool/sub-agent counts, duration, failure count, prompt preview. |
+| `vw_session_summary` | One row per session with tool/sub-agent counts, duration, failure count, prompt preview, model, token totals, and self-rating. |
 | `vw_tool_usage_24h` | Tool mix over the last 24h with ok/fail/pending counts and latency percentiles. |
 | `vw_subagent_tree` | Flattened recursive view of every agent invocation with parent linkage and depth. |
 | `vw_repeat_fail_domains` | WebFetch hostnames ranked by failure count — a "URLs to avoid" list. |
