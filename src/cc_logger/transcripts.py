@@ -47,15 +47,30 @@ def _parse_ts(value: str | None) -> datetime | None:
         return None
 
 
-def _scan_model(transcript_path: Path) -> str | None:
-    """Return the model that actually ran this transcript — the most frequent
-    assistant `message.model` across the file.
+def scan_transcript_stats(transcript_path: Path) -> dict | None:
+    """Single pass over a transcript JSONL returning the model that ran it and
+    its summed token usage.
 
-    Claude Code's SessionStart hook frequently omits the model, leaving
-    `sessions.model` NULL, which breaks model-vs-model comparison. The transcript
-    records the real model on every assistant line, so it's the reliable source.
+    Neither is available from the hook stream: Claude Code's SessionStart hook
+    frequently omits the model, and NO hook event carries token totals
+    (SessionEnd reports only a `reason`). But every assistant line records both
+    `message.model` and a `message.usage` block, so the transcript is the
+    reliable source for each.
+
+    Returns a dict with keys: model (modal assistant model, or None),
+    input_tokens / output_tokens / cache_read_tokens / cache_creation_tokens
+    (summed across assistant messages), total_tokens (sum of those four), and
+    assistant_messages (count with usage). Returns None if the file is
+    unreadable or has no assistant messages.
+
+    Token note: each assistant message's `usage` is for its own API call;
+    summing across messages yields what was actually billed for this
+    transcript. cache-read is re-counted per turn, which is how it bills.
     """
     counts: dict[str, int] = {}
+    agg = {"input_tokens": 0, "output_tokens": 0,
+           "cache_read_tokens": 0, "cache_creation_tokens": 0}
+    seen = 0
     try:
         with open(transcript_path) as f:
             for line in f:
@@ -68,12 +83,27 @@ def _scan_model(transcript_path: Path) -> str | None:
                     continue
                 if m.get("type") != "assistant":
                     continue
-                model = (m.get("message") or {}).get("model")
+                msg = m.get("message") or {}
+                model = msg.get("model")
                 if isinstance(model, str) and model and model != "<synthetic>":
                     counts[model] = counts.get(model, 0) + 1
+                u = msg.get("usage") or {}
+                if u:
+                    seen += 1
+                    agg["input_tokens"] += u.get("input_tokens") or 0
+                    agg["output_tokens"] += u.get("output_tokens") or 0
+                    agg["cache_read_tokens"] += u.get("cache_read_input_tokens") or 0
+                    agg["cache_creation_tokens"] += u.get("cache_creation_input_tokens") or 0
     except OSError:
         return None
-    return max(counts, key=counts.get) if counts else None
+    if not counts and seen == 0:
+        return None
+    return {
+        "model": max(counts, key=counts.get) if counts else None,
+        "total_tokens": sum(agg.values()),
+        "assistant_messages": seen,
+        **agg,
+    }
 
 
 def _iter_text_blocks(transcript_path: Path) -> Iterator[dict]:
@@ -173,24 +203,61 @@ async def ingest(
             if cur.rowcount:
                 inserted += 1
 
-        # Backfill the model that actually ran, from the transcript. For the
-        # root transcript this sets sessions.model; for a sub-agent transcript
-        # it sets that invocation's model. Only fills/corrects, never clobbers
-        # with NULL.
-        model = _scan_model(p)
-        if model:
-            if invocation_id is None:
+        # Backfill the model + token usage that actually ran, from the
+        # transcript. Neither is reliably available from the hook stream, but
+        # both are recorded on every assistant line. Only fills/corrects.
+        stats = scan_transcript_stats(p)
+        if stats:
+            root_id = f"root::{session_id}"
+            is_root = invocation_id is None or invocation_id == root_id
+            # Per-invocation: write model + tokens to this invocation's own row.
+            # The root invocation is the real row 'root::<session_id>'; a
+            # sub-agent's is keyed by its agent_id. (Earlier this branch wrote
+            # the ROOT transcript's model to agent_invocations and never to
+            # sessions, because every caller passes a non-None invocation_id —
+            # which is why sessions.model stayed NULL.)
+            if invocation_id is not None:
+                await cur.execute(
+                    """
+                    UPDATE agent_invocations SET
+                        model = COALESCE(%s, model),
+                        input_tokens = %s, output_tokens = %s,
+                        cache_read_tokens = %s, cache_creation_tokens = %s,
+                        total_tokens = %s
+                    WHERE invocation_id = %s
+                    """,
+                    (stats["model"], stats["input_tokens"], stats["output_tokens"],
+                     stats["cache_read_tokens"], stats["cache_creation_tokens"],
+                     stats["total_tokens"], invocation_id),
+                )
+            # Session-level model comes from the ROOT transcript only.
+            if is_root and stats["model"]:
                 await cur.execute(
                     "UPDATE sessions SET model = %s "
                     "WHERE session_id = %s AND model IS DISTINCT FROM %s",
-                    (model, session_id, model),
+                    (stats["model"], session_id, stats["model"]),
                 )
-            else:
-                await cur.execute(
-                    "UPDATE agent_invocations SET model = %s "
-                    "WHERE invocation_id = %s AND model IS DISTINCT FROM %s",
-                    (model, invocation_id, model),
-                )
+            # Session token totals = sum across all the session's invocations
+            # (root + every sub-agent). Recomputed on each ingest so it stays
+            # correct as sub-agent transcripts land at SubagentStop.
+            await cur.execute(
+                """
+                UPDATE sessions s SET
+                    input_tokens = t.in_tok, output_tokens = t.out_tok,
+                    cache_read_tokens = t.cr_tok, cache_creation_tokens = t.cc_tok,
+                    total_tokens = t.tot_tok
+                FROM (
+                    SELECT COALESCE(sum(input_tokens), 0) AS in_tok,
+                           COALESCE(sum(output_tokens), 0) AS out_tok,
+                           COALESCE(sum(cache_read_tokens), 0) AS cr_tok,
+                           COALESCE(sum(cache_creation_tokens), 0) AS cc_tok,
+                           COALESCE(sum(total_tokens), 0) AS tot_tok
+                    FROM agent_invocations WHERE session_id = %s
+                ) t
+                WHERE s.session_id = %s
+                """,
+                (session_id, session_id),
+            )
 
     if inserted:
         log.info("ingested %d new text blocks from %s", inserted, p.name)

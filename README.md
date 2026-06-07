@@ -140,7 +140,10 @@ python scripts/install-hooks.py     # wires the Claude Code hooks
 - Every tool call in the capture allowlist (Agent, Bash, Edit, Write, WebFetch, WebSearch, and `mcp__.*`)
 - Tool input + tool response payloads as JSONB; anything >50KB spills to a separate `artifacts` table
 - **Claude's text narration between tool calls** — read from the Claude Code transcript file at every `Stop` / `SubagentStop`, stored in the `messages` table. (Extended `thinking` blocks are encrypted by Anthropic — only `text` blocks are capturable.)
+- **The model and token usage that actually ran** — per session and per invocation, summed from the transcript (`message.model` + `message.usage`). The hook stream can't supply these: SessionStart often omits the model and no hook event carries token totals, so cc-logger reads them from the transcript it's already parsing for narration.
 - Optional regex redaction of common secret patterns before write (on by default)
+
+Token usage and model are recovered from the transcript, so they work even though the hooks don't report them. To repopulate sessions captured before this existed, run `python scripts/backfill-tokens-model.py --apply`.
 
 ## Privacy
 
@@ -154,10 +157,16 @@ Skipped: `Read`, `Glob`, `Grep`, `TodoWrite` (to keep volume sane).
 ## CLI
 
 ```bash
-cc-logger sessions [--limit N]              # list recent sessions
+cc-logger sessions [--limit N]              # list recent sessions (model, tokens, rating)
 cc-logger inspect <session-id>              # render the session tree
-cc-logger insights [--days N]               # cross-session analytics
+cc-logger insights [--days N]               # cross-session analytics (incl. tokens by model)
+cc-logger rate <session-id> <1-5> [--note "…"]   # attach a retrospective rating + note
 ```
+
+`rate` accepts a unique session-id prefix. The rating and note land in
+`sessions.self_rating` / `sessions.retro_note` and show up in `sessions`,
+`insights`, and `vw_session_summary` — closing the film-room loop so a run you
+learned something from is queryable later.
 
 ## Canned queries
 

@@ -38,7 +38,14 @@ VIEWS = [
       (SELECT count(*) FROM tool_calls tc WHERE tc.session_id = s.session_id) AS tool_count,
       (SELECT count(*) FROM tool_calls tc WHERE tc.session_id = s.session_id AND tc.status='failure') AS fail_count,
       (SELECT count(*) FROM agent_invocations ai WHERE ai.session_id = s.session_id) AS invocation_count,
-      (SELECT count(*) FROM agent_invocations ai WHERE ai.session_id = s.session_id AND ai.parent_invocation_id IS NOT NULL) AS subagent_count
+      (SELECT count(*) FROM agent_invocations ai WHERE ai.session_id = s.session_id AND ai.parent_invocation_id IS NOT NULL) AS subagent_count,
+      -- token columns appended at the end so CREATE OR REPLACE stays valid
+      s.input_tokens,
+      s.output_tokens,
+      s.cache_read_tokens,
+      s.cache_creation_tokens,
+      s.total_tokens,
+      s.retro_note
     FROM sessions s
     """,
     # Tool usage rolled up across the last 24h

@@ -20,6 +20,17 @@ async def _query_all(cur, sql: str, params: tuple = ()) -> list[dict]:
     return [dict(zip(cols, r)) for r in await cur.fetchall()]
 
 
+def _fmt_tokens(n: int | None) -> str:
+    """Human-readable token count: 1_234_567 -> '1.2M'."""
+    if not n:
+        return "-"
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.0f}k"
+    return str(n)
+
+
 async def report(days: int = 30) -> None:
     print(f"\n=== cc-logger insights (last {days} days) ===\n")
 
@@ -42,6 +53,39 @@ async def report(days: int = 30) -> None:
             print(f"Totals: {r['sessions']} sessions, {r['tools'] or 0} tool calls, "
                   f"{r['fails'] or 0} failures, {r['subs'] or 0} sub-agents, "
                   f"{r['distinct_tools'] or 0} distinct tools\n")
+
+            # 1b) Token usage + self-rating coverage (recovered from transcripts)
+            rows = await _query_all(cur, """
+                SELECT model,
+                       count(*) AS sessions,
+                       sum(input_tokens) AS in_tok,
+                       sum(output_tokens) AS out_tok,
+                       sum(cache_read_tokens) AS cr_tok,
+                       sum(total_tokens) AS tot_tok
+                FROM sessions
+                WHERE started_at > now() - (%s || ' days')::interval
+                GROUP BY model ORDER BY tot_tok DESC NULLS LAST
+            """, (str(days),))
+            if any(r["tot_tok"] for r in rows):
+                print("Token usage by model:")
+                print(f"  {'model':22s} {'sess':>5s} {'in':>7s} {'out':>7s} {'cache_rd':>9s} {'total':>7s}")
+                for r in rows:
+                    if not r["tot_tok"]:
+                        continue
+                    print(f"  {(r['model'] or '(unknown)'):22s} {r['sessions']:>5d} "
+                          f"{_fmt_tokens(r['in_tok']):>7s} {_fmt_tokens(r['out_tok']):>7s} "
+                          f"{_fmt_tokens(r['cr_tok']):>9s} {_fmt_tokens(r['tot_tok']):>7s}")
+                print()
+            rated = await _query_all(cur, """
+                SELECT count(*) FILTER (WHERE self_rating IS NOT NULL) AS rated,
+                       count(*) AS total,
+                       round(avg(self_rating)::numeric, 1) AS avg_rating
+                FROM sessions WHERE started_at > now() - (%s || ' days')::interval
+            """, (str(days),))
+            rr = rated[0]
+            avg = f", avg {rr['avg_rating']}/5" if rr["avg_rating"] is not None else ""
+            print(f"Self-rated sessions: {rr['rated']}/{rr['total']}{avg}  "
+                  f"(rate one with `cc-logger rate <session> <1-5> --note \"…\"`)\n")
 
             # 2) Power-law check
             rows = await _query_all(cur, """
@@ -139,11 +183,12 @@ async def sessions(limit: int = 20) -> None:
         async with conn.cursor() as cur:
             await cur.execute(
                 """
-                SELECT s.session_id, s.started_at, s.ended_at,
+                SELECT s.session_id, s.started_at, s.ended_at, s.model,
+                       s.total_tokens, s.self_rating,
                        (SELECT count(*) FROM tool_calls tc WHERE tc.session_id=s.session_id) AS tools,
                        (SELECT count(*) FROM agent_invocations ai
                           WHERE ai.session_id=s.session_id AND ai.parent_invocation_id IS NOT NULL) AS subs,
-                       LEFT(COALESCE(s.initial_prompt,''), 70) AS prompt
+                       LEFT(COALESCE(s.initial_prompt,''), 64) AS prompt
                 FROM sessions s
                 ORDER BY s.started_at DESC LIMIT %s
                 """,
@@ -152,10 +197,49 @@ async def sessions(limit: int = 20) -> None:
             rows = await cur.fetchall()
     print(f"\n{len(rows)} most recent sessions:\n")
     for r in rows:
-        sid, started, ended, tools, subs, prompt = r
+        sid, started, ended, model, tokens, rating, tools, subs, prompt = r
         ended_str = ended.strftime("%m-%d %H:%M") if ended else "open       "
+        model_str = (model or "?").replace("claude-", "")[:12]
+        rate_str = f"{rating}★" if rating else "  "
         print(f"  {sid[:18]:18s}  {started.strftime('%m-%d %H:%M')}→{ended_str:11s}  "
+              f"{model_str:12s} tok={_fmt_tokens(tokens):>6s} {rate_str}  "
               f"tools={tools:>4d} subs={subs:>2d}  {prompt!r}")
+
+
+async def _resolve_session(cur, prefix: str) -> str:
+    """Resolve a session id or unique prefix to a full session_id."""
+    await cur.execute(
+        "SELECT session_id FROM sessions WHERE session_id = %s OR session_id LIKE %s LIMIT 5",
+        (prefix, prefix + "%"),
+    )
+    rows = [r[0] for r in await cur.fetchall()]
+    if not rows:
+        raise SystemExit(f"No session matching {prefix!r}.")
+    # exact match wins even if it's also a prefix of others
+    if prefix in rows:
+        return prefix
+    if len(rows) > 1:
+        raise SystemExit(f"Prefix {prefix!r} is ambiguous ({len(rows)}+ matches); use more characters.")
+    return rows[0]
+
+
+async def set_rating(session_id: str, rating: int, note: str | None) -> None:
+    if not 1 <= rating <= 5:
+        raise SystemExit("rating must be between 1 and 5.")
+    async with db.connection() as conn:
+        async with conn.cursor() as cur:
+            sid = await _resolve_session(cur, session_id)
+            await cur.execute(
+                """
+                UPDATE sessions
+                SET self_rating = %s,
+                    retro_note = COALESCE(%s, retro_note)
+                WHERE session_id = %s
+                """,
+                (rating, note, sid),
+            )
+    suffix = f"  note: {note!r}" if note else ""
+    print(f"Rated {sid[:18]} → {rating}/5{suffix}")
 
 
 def run_insights(days: int) -> None:
@@ -164,3 +248,7 @@ def run_insights(days: int) -> None:
 
 def run_sessions(limit: int) -> None:
     asyncio.run(sessions(limit))
+
+
+def run_rate(session_id: str, rating: int, note: str | None) -> None:
+    asyncio.run(set_rating(session_id, rating, note))
