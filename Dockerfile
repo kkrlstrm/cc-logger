@@ -9,6 +9,7 @@ WORKDIR /app
 
 # Copy only files needed for dependency resolution first (better layer caching)
 COPY pyproject.toml ./
+COPY README.md ./
 COPY src/ ./src/
 
 # Install dependencies into a project-local venv

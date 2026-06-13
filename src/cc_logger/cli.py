@@ -26,10 +26,11 @@ load_dotenv(_ROOT / ".env")
 
 def cmd_serve(args: argparse.Namespace) -> None:
     port = int(os.getenv("HOOK_PORT", "8787"))
+    host = os.getenv("HOOK_HOST", "127.0.0.1")
     log_level = os.getenv("LOG_LEVEL", "info")
     uvicorn.run(
         "cc_logger.app:app",
-        host="127.0.0.1",
+        host=host,
         port=port,
         log_level=log_level,
         reload=args.reload,
