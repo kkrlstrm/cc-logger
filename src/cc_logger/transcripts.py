@@ -106,6 +106,90 @@ def scan_transcript_stats(transcript_path: Path) -> dict | None:
     }
 
 
+_DEFAULT_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+_TOKEN_KEYS = ("input_tokens", "output_tokens",
+               "cache_read_tokens", "cache_creation_tokens", "total_tokens")
+
+
+def session_root_transcript(
+    session_id: str, projects_dir: Path | None = None
+) -> Path | None:
+    """Locate the ROOT transcript `<proj>/<session_id>.jsonl` for a session."""
+    base = projects_dir or _DEFAULT_PROJECTS_DIR
+    hits = list(base.glob(f"*/{session_id}.jsonl"))
+    return hits[0] if hits else None
+
+
+def session_subagent_transcripts(
+    session_id: str, projects_dir: Path | None = None
+) -> list[tuple[str, Path]]:
+    """Return (agent_id, path) for every sub-agent / workflow transcript of a
+    session.
+
+    Claude Code writes each sub-agent's conversation to its OWN file under
+    `<proj>/<session_id>/subagents/agent-<agent_id>.jsonl`; Workflow-tool agents
+    are nested one level deeper at `subagents/workflows/wf_*/agent-<agent_id>.jsonl`.
+    The root `<session_id>.jsonl` contains none of them (no sidechain lines), so
+    a scan that only reads the root file misses ALL sub-agent tokens — which is
+    why session token totals undercounted ~3x. `agent_id` is parsed from the
+    filename and matches `agent_invocations.agent_id`.
+    """
+    base = projects_dir or _DEFAULT_PROJECTS_DIR
+    out: list[tuple[str, Path]] = []
+    for subagents_dir in base.glob(f"*/{session_id}/subagents"):
+        for path in subagents_dir.rglob("agent-*.jsonl"):
+            out.append((path.stem[len("agent-"):], path))
+    return out
+
+
+def scan_session_totals(
+    session_id: str, projects_dir: Path | None = None
+) -> dict:
+    """Authoritative per-session token usage: the root transcript PLUS every
+    sub-agent and workflow transcript on disk.
+
+    Returns a dict with:
+        root        — scan_transcript_stats of the root transcript (or None)
+        per_agent   — {agent_id: stats} for each sub-agent transcript
+        totals      — summed token columns across root + all sub-agents
+        subagent_files — count of sub-agent transcripts scanned
+
+    Unlike summing `agent_invocations` rows, this captures sub-agent and
+    workflow transcripts that never produced an invocation row (e.g. Workflow
+    agents that don't fire SubagentStop).
+    """
+    totals = {k: 0 for k in _TOKEN_KEYS}
+
+    def _add(stats: dict | None) -> None:
+        if stats:
+            for k in _TOKEN_KEYS:
+                totals[k] += stats.get(k) or 0
+
+    root_path = session_root_transcript(session_id, projects_dir)
+    root_stats = scan_transcript_stats(root_path) if root_path else None
+    _add(root_stats)
+
+    per_agent: dict[str, dict] = {}
+    for agent_id, path in session_subagent_transcripts(session_id, projects_dir):
+        stats = scan_transcript_stats(path)
+        if stats is None:
+            continue
+        if agent_id in per_agent:
+            # Rare: same agent_id split across files — sum them.
+            for k in _TOKEN_KEYS:
+                per_agent[agent_id][k] = (per_agent[agent_id].get(k) or 0) + (stats.get(k) or 0)
+        else:
+            per_agent[agent_id] = stats
+        _add(stats)
+
+    return {
+        "root": root_stats,
+        "per_agent": per_agent,
+        "totals": totals,
+        "subagent_files": len(per_agent),
+    }
+
+
 def _iter_text_blocks(transcript_path: Path) -> Iterator[dict]:
     """Yield {message_id, block_index, text, position, created_at} for every
     text block in every assistant message in the JSONL.

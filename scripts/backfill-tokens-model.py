@@ -8,15 +8,18 @@ reliably (SessionStart often omits the model; no hook event carries tokens), so
 older rows have sessions.model NULL and sessions.total_tokens NULL. Both are
 recorded on every assistant line of the Claude Code transcript, which is still
 on disk for most sessions. This script reads each session's root transcript
-(`~/.claude/projects/<proj>/<session_id>.jsonl`), recomputes model + token sums
-via the same scanner the live pipeline now uses, and writes them to the
-session and its root invocation row.
+(`~/.claude/projects/<proj>/<session_id>.jsonl`) AND every sub-agent / workflow
+transcript under `<proj>/<session_id>/subagents/`, recomputes model + token sums
+via the shared scanner, and writes them to the session, its root invocation row,
+and each matching sub-agent invocation row.
 
-Scope / limitation: only the ROOT transcript is recoverable after the fact —
-sub-agent transcripts live in separate files whose paths were never stored, so
-historical sub-agent tokens cannot be backfilled. They populate going forward
-via the fixed live ingest (SubagentStop). For sessions with heavy fan-out, the
-backfilled total therefore reflects the root agent only; this is logged.
+Sub-agents ARE recoverable after the fact: Claude Code writes each one to its own
+`subagents/agent-<agent_id>.jsonl` (Workflow agents nested under
+`subagents/workflows/wf_*/`), keyed by an agent_id that matches
+`agent_invocations.agent_id`. The session total is computed authoritatively from
+the FULL file set (root + all sub-agent files), so it also captures sub-agent /
+workflow transcripts that never produced an invocation row. Reading only the root
+file undercounted session totals ~3x — that is the bug this closes.
 
 Usage:
     uv run python scripts/backfill-tokens-model.py            # dry-run (report only)
@@ -35,9 +38,7 @@ import psycopg
 _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env")
 sys.path.insert(0, str(_ROOT / "src"))
-from cc_logger.transcripts import scan_transcript_stats  # noqa: E402
-
-PROJECTS_DIR = Path.home() / ".claude" / "projects"
+from cc_logger.transcripts import scan_session_totals  # noqa: E402
 
 
 def get_dsn() -> str:
@@ -45,12 +46,6 @@ def get_dsn() -> str:
     if not dsn:
         sys.exit("DATABASE_URL not set in environment (.env)")
     return dsn
-
-
-def find_transcript(session_id: str) -> Path | None:
-    """Locate <session_id>.jsonl under any project dir (root session transcript)."""
-    hits = list(PROJECTS_DIR.glob(f"*/{session_id}.jsonl"))
-    return hits[0] if hits else None
 
 
 def main() -> None:
@@ -67,26 +62,31 @@ def main() -> None:
             sessions = sessions[: args.limit]
 
         scanned = model_set = tokens_set = missing = no_usage = 0
+        sub_rows_set = sub_files_total = 0
+        grew_tokens = 0  # sum of (new_total - old_total) across sessions
         for session_id, cur_model, cur_tokens in sessions:
-            tp = find_transcript(session_id)
-            if tp is None:
-                missing += 1
-                continue
-            stats = scan_transcript_stats(tp)
-            if stats is None:
+            scan = scan_session_totals(session_id)
+            root = scan["root"]
+            if root is None:
                 missing += 1
                 continue
             scanned += 1
-            if stats["assistant_messages"] == 0:
+            if root["assistant_messages"] == 0:
                 no_usage += 1
             root_id = f"root::{session_id}"
+            totals = scan["totals"]          # root + ALL sub-agent / workflow files
+            new_total = totals["total_tokens"]
+            sub_files_total += scan["subagent_files"]
 
             if not args.apply:
                 tag = []
-                if stats["model"] and stats["model"] != cur_model:
-                    tag.append(f"model:{stats['model'].replace('claude-','')}")
-                if stats["total_tokens"]:
-                    tag.append(f"tok:{stats['total_tokens']:,}")
+                if root["model"] and root["model"] != cur_model:
+                    tag.append(f"model:{root['model'].replace('claude-','')}")
+                if new_total:
+                    delta = new_total - (cur_tokens or 0)
+                    tag.append(f"tok:{new_total:,}")
+                    if delta:
+                        tag.append(f"(+{delta:,} from {scan['subagent_files']} sub-agent files)")
                 print(f"  {session_id[:18]}  {' '.join(tag) or '(no change)'}")
                 continue
 
@@ -100,46 +100,65 @@ def main() -> None:
                     total_tokens = %s
                 WHERE invocation_id = %s
                 """,
-                (stats["model"], stats["input_tokens"], stats["output_tokens"],
-                 stats["cache_read_tokens"], stats["cache_creation_tokens"],
-                 stats["total_tokens"], root_id),
+                (root["model"], root["input_tokens"], root["output_tokens"],
+                 root["cache_read_tokens"], root["cache_creation_tokens"],
+                 root["total_tokens"], root_id),
             )
+            # Each matching sub-agent invocation row gets its own model + tokens
+            # (for the per-agent breakdown). Files with no row are still counted
+            # in the session total below — they just have nowhere to attribute.
+            for agent_id, st in scan["per_agent"].items():
+                cur.execute(
+                    """
+                    UPDATE agent_invocations SET
+                        model = COALESCE(%s, model),
+                        input_tokens = %s, output_tokens = %s,
+                        cache_read_tokens = %s, cache_creation_tokens = %s,
+                        total_tokens = %s
+                    WHERE invocation_id = %s
+                    """,
+                    (st["model"], st["input_tokens"], st["output_tokens"],
+                     st["cache_read_tokens"], st["cache_creation_tokens"],
+                     st["total_tokens"], agent_id),
+                )
+                if cur.rowcount:
+                    sub_rows_set += 1
             # Session model (from the root transcript).
-            if stats["model"]:
+            if root["model"]:
                 cur.execute(
                     "UPDATE sessions SET model = %s WHERE session_id = %s AND model IS DISTINCT FROM %s",
-                    (stats["model"], session_id, stats["model"]),
+                    (root["model"], session_id, root["model"]),
                 )
-                if stats["model"] != cur_model:
+                if root["model"] != cur_model:
                     model_set += 1
-            # Session token totals = sum across its invocations (root + any
-            # sub-agents already captured live).
+            # Session token totals come from the AUTHORITATIVE full-file scan
+            # (root + every sub-agent / workflow transcript), not a sum over
+            # invocation rows — so unmatched workflow agents are still counted.
             cur.execute(
                 """
-                UPDATE sessions s SET
-                    input_tokens = t.in_tok, output_tokens = t.out_tok,
-                    cache_read_tokens = t.cr_tok, cache_creation_tokens = t.cc_tok,
-                    total_tokens = t.tot_tok
-                FROM (
-                    SELECT COALESCE(sum(input_tokens), 0) AS in_tok,
-                           COALESCE(sum(output_tokens), 0) AS out_tok,
-                           COALESCE(sum(cache_read_tokens), 0) AS cr_tok,
-                           COALESCE(sum(cache_creation_tokens), 0) AS cc_tok,
-                           COALESCE(sum(total_tokens), 0) AS tot_tok
-                    FROM agent_invocations WHERE session_id = %s
-                ) t
-                WHERE s.session_id = %s
+                UPDATE sessions SET
+                    input_tokens = %s, output_tokens = %s,
+                    cache_read_tokens = %s, cache_creation_tokens = %s,
+                    total_tokens = %s
+                WHERE session_id = %s
                 """,
-                (session_id, session_id),
+                (totals["input_tokens"], totals["output_tokens"],
+                 totals["cache_read_tokens"], totals["cache_creation_tokens"],
+                 new_total, session_id),
             )
-            if stats["total_tokens"]:
+            if new_total:
                 tokens_set += 1
+                grew_tokens += new_total - (cur_tokens or 0)
 
     verb = "Would scan" if not args.apply else "Scanned"
-    print(f"\n{verb} {scanned} transcripts "
-          f"({missing} sessions had no transcript on disk, {no_usage} had no usage data).")
+    print(f"\n{verb} {scanned} sessions "
+          f"({missing} had no transcript on disk, {no_usage} had no usage data); "
+          f"read {sub_files_total} sub-agent / workflow transcripts.")
     if args.apply:
-        print(f"Set/updated model on {model_set} sessions, tokens on {tokens_set} sessions.")
+        print(f"Set/updated model on {model_set} sessions, tokens on {tokens_set} sessions, "
+              f"{sub_rows_set} sub-agent invocation rows.")
+        print(f"Session token totals grew by {grew_tokens:,} tokens "
+              f"vs the old root-only figures.")
     else:
         print("Dry run — re-run with --apply to write.")
 

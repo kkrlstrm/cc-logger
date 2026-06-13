@@ -8,7 +8,12 @@ JSONL-parsing logic.
 import json
 from pathlib import Path
 
-from cc_logger.transcripts import _iter_text_blocks, scan_transcript_stats
+from cc_logger.transcripts import (
+    _iter_text_blocks,
+    scan_session_totals,
+    scan_transcript_stats,
+    session_subagent_transcripts,
+)
 
 
 def _write_transcript(tmp_path: Path, messages: list[dict]) -> Path:
@@ -241,3 +246,58 @@ def test_stats_skips_malformed_lines(tmp_path):
         + json.dumps(_assistant_usage("claude-opus-4-8", {"output_tokens": 42})) + "\n"
     )
     assert scan_transcript_stats(p)["output_tokens"] == 42
+
+
+def _usage_line(model, out):
+    return {"type": "assistant", "message": {"model": model, "usage": {
+        "input_tokens": 0, "output_tokens": out,
+        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}}
+
+
+def _build_session_tree(projects_dir, session_id, root_out, subagents):
+    """Lay out a realistic on-disk session: root transcript + subagents/ files
+    (and a nested workflows/ agent), mirroring Claude Code's structure."""
+    proj = projects_dir / "-Users-someone-repo"
+    proj.mkdir(parents=True)
+    (proj / f"{session_id}.jsonl").write_text(
+        json.dumps(_usage_line("claude-opus-4-8", root_out)) + "\n")
+    sub_dir = proj / session_id / "subagents"
+    sub_dir.mkdir(parents=True)
+    for agent_id, model, out in subagents:
+        (sub_dir / f"agent-{agent_id}.jsonl").write_text(
+            json.dumps(_usage_line(model, out)) + "\n")
+    return proj
+
+
+def test_session_subagent_transcripts_finds_flat_and_nested(tmp_path):
+    sid = "11111111-2222-3333-4444-555555555555"
+    proj = _build_session_tree(tmp_path, sid, 100, [("aaa111", "claude-sonnet-4-6", 50)])
+    # a workflow agent nested one level deeper
+    wf = proj / sid / "subagents" / "workflows" / "wf_abc"
+    wf.mkdir(parents=True)
+    (wf / "agent-bbb222.jsonl").write_text(
+        json.dumps(_usage_line("claude-haiku-4-5-20251001", 7)) + "\n")
+
+    found = dict(session_subagent_transcripts(sid, tmp_path))
+    assert set(found) == {"aaa111", "bbb222"}  # both flat and workflow-nested
+
+
+def test_scan_session_totals_sums_root_plus_subagents(tmp_path):
+    sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    _build_session_tree(tmp_path, sid, 100, [
+        ("agent1", "claude-sonnet-4-6", 50),
+        ("agent2", "claude-haiku-4-5-20251001", 25),
+    ])
+    scan = scan_session_totals(sid, tmp_path)
+    assert scan["root"]["output_tokens"] == 100
+    assert scan["subagent_files"] == 2
+    assert set(scan["per_agent"]) == {"agent1", "agent2"}
+    # Authoritative total = root + both sub-agents (the undercount fix).
+    assert scan["totals"]["output_tokens"] == 175
+
+
+def test_scan_session_totals_missing_session(tmp_path):
+    scan = scan_session_totals("no-such-session", tmp_path)
+    assert scan["root"] is None
+    assert scan["totals"]["total_tokens"] == 0
+    assert scan["subagent_files"] == 0
