@@ -27,6 +27,29 @@ psql $DATABASE_URL -f queries/13_tool_sequence_conformance.sql  # drift across r
 
 Built on [Claude Code's HTTP hooks](https://docs.claude.com/en/docs/claude-code/hooks) — no patches or modifications to Claude Code itself.
 
+## The other half: turn observations into controls
+
+cc-logger is the flight recorder. [**agent-guard**](https://github.com/kkrlstrm/agent-guard) is the control surface. Once cc-logger shows you which failures keep repeating, agent-guard turns those patterns into lightweight runtime guardrails at the tool-call boundary — a nudge when the model can recover, a hard block when the action is irreversible.
+
+```
+        Claude Code run
+              │
+              ▼
+   cc-logger records prompts, tools, sub-agents, failures, drift
+              │
+              ▼
+   derive recurring failure patterns
+              │
+              ▼
+   agent-guard promotes them into monitor / nudge / deny / block rules
+              │
+              ▼
+   tamper-evident audit log  ──▶  new telemetry
+              └──────────────◀───────────────┘
+```
+
+Observe here, enforce there. agent-guard's `derive_rules --from-cc-logger` reads this database directly and proposes candidate rules from your real recurring failures — so "decide what to make deterministic" (above) gets a sibling: decide what to guard. Together they're the full agent-QA loop: observability and conformance here, controls and auditability there.
+
 ## What you get
 
 Run a Claude Code session, then `cc-logger inspect <session-id>` shows you the full tree of what happened:
