@@ -1,5 +1,8 @@
 # cc-logger
 
+<!-- portfolio-status -->
+**Status:** Production-used — I run this against my own live agent workflows. · **Layer:** Runtime observability · **[Portfolio map ›](https://github.com/kkrlstrm)**
+
 **Agent QA infrastructure for Claude Code workflows.** Replay, inspect, and compare agent runs so repeated workflows don't silently drift. cc-logger captures every prompt, sub-agent, tool call, and Claude's narration in between into Postgres — so you can see how the work actually happened, not just what came out, and turn your own usage into data you can optimize against.
 
 Two runs of the same workflow can produce identical-looking output while one took the happy path and the other recovered from three failed WebFetches, fell back to a different source, and got lucky. The outputs match. The processes don't. cc-logger is the layer that catches that.
@@ -227,3 +230,16 @@ service) — you must release your modified source under the same license.
 
 Copyright (C) 2026 Kai Karlstrom. For commercial licensing outside the AGPL
 terms, open an issue to discuss.
+
+---
+
+<!-- portfolio-footer -->
+## Where this fits
+
+Part of a portfolio of **governed, AI-native GTM systems** — reference implementations and reusable patterns extracted from a private production stack. In that system this is the flight recorder for Claude Code agent runs.
+
+**Full portfolio map → [github.com/kkrlstrm](https://github.com/kkrlstrm)**
+
+Works with:
+- [agent-guard](https://github.com/kkrlstrm/agent-guard) — the control surface that acts on what this observes
+- [codex-logger](https://github.com/kkrlstrm/codex-logger) — the OpenAI Codex sibling
