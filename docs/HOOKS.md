@@ -28,9 +28,13 @@ Official Claude Code hooks documentation: https://code.claude.com/docs/en/hooks.
 - `Write`
 - `WebFetch`
 - `WebSearch`
+- `Read` — **attribution**: `tool_input.file_path` is the context artifact loaded
+- `Skill` — **attribution**: which skill a run actually invoked
 - `mcp__.*` (any MCP server tool, regex)
 
-**Intentionally skipped**: `Read`, `Glob`, `Grep`, `TodoWrite`, `NotebookEdit`. These are very high-volume and rarely interesting for prompt-practice review.
+**Intentionally skipped**: `Glob`, `Grep`, `TodoWrite`, `NotebookEdit`. High-volume, and `Glob`/`Grep` name a *pattern* rather than a specific artifact, so they can't be attributed to a piece of context.
+
+`Read` and `Skill` were skipped originally for volume, then added back: they are the only record of **which context was actually loaded** into a run. Without them you can see what an agent did but never which instruction, memory, or skill it did it from — so "which of these skills is ever used?" and "does loading a given doc change how a run goes?" have no data behind them. See [`scripts/knowledge-effect.py`](../../scripts/knowledge-effect.py) in the parent repo for the report built on this.
 
 If you want to change what's captured, edit the `matcher` lines in `~/.claude/settings.json` (under each tool event) AND the `CAPTURE_TOOLS` set in [`src/cc_logger/filters.py`](../src/cc_logger/filters.py).
 

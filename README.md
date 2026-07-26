@@ -21,6 +21,7 @@ psql $DATABASE_URL -f queries/13_tool_sequence_conformance.sql  # drift across r
 - **Turn sub-agent runs into specs.** Every sub-agent fan-out is recorded (most setups drop these entirely). The worker prompt you keep re-typing is, almost verbatim, the definition for a reusable sub-agent.
 - **Compare models on real work.** Every run is tagged with the model that ran it, so you can slice one model version against another on the same kind of task instead of trusting a single impressive session.
 - **Decide what to make deterministic.** The same API/DB/parsing glue, re-improvised every session, shows up as a pattern — the signal that it should be a script, not an LLM call.
+- **Find the context nobody reads.** `Read` and `Skill` calls are captured, so you can see which skills, instruction files, and docs actually get loaded — and, by diffing against what's on disk, which never do. Unread context still costs tokens and still dilutes the parts that matter. See [`queries/17_context_usage.sql`](queries/17_context_usage.sql).
 
 **Who this is for:**
 
@@ -196,7 +197,7 @@ learned something from is queryable later.
 
 ## Canned queries
 
-Fifteen ready-to-run SQL files in [`queries/`](queries/).
+Seventeen ready-to-run SQL files in [`queries/`](queries/).
 
 **The conformance loop** (the differentiated value — see "Comparing runs" above):
 - `13_tool_sequence_conformance.sql` — groups sessions by their root-agent tool sequence to surface drift across repeat runs of the same agent. Modal paths vs. snowflakes.
@@ -216,6 +217,8 @@ Fifteen ready-to-run SQL files in [`queries/`](queries/).
 - `10_subagent_fanout_distribution.sql` — how often you fan out, and how wide
 - `11_longest_sessions_by_prompt.sql` — which prompts produced the longest sessions
 - `12_error_rates_by_tool.sql` — fail % per tool name
+- `16_hook_targets.sql` — which tool surfaces are worth guarding
+- `17_context_usage.sql` — which skills/instructions/docs actually get loaded
 
 ## Schema
 

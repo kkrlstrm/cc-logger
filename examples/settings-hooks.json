@@ -17,7 +17,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Agent|Bash|Edit|Write|WebFetch|WebSearch",
+        "matcher": "Agent|Bash|Edit|Read|Skill|WebFetch|WebSearch|Write",
         "hooks": [
           { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
         ]
@@ -31,7 +31,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Agent|Bash|Edit|Write|WebFetch|WebSearch",
+        "matcher": "Agent|Bash|Edit|Read|Skill|WebFetch|WebSearch|Write",
         "hooks": [
           { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
         ]
@@ -45,7 +45,7 @@
     ],
     "PostToolUseFailure": [
       {
-        "matcher": "Agent|Bash|Edit|Write|WebFetch|WebSearch",
+        "matcher": "Agent|Bash|Edit|Read|Skill|WebFetch|WebSearch|Write",
         "hooks": [
           { "type": "http", "url": "http://127.0.0.1:8787/hook", "timeout": 5 }
         ]

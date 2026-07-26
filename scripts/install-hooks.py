@@ -25,7 +25,12 @@ SETTINGS = Path.home() / ".claude" / "settings.json"
 
 DEFAULT_PORT = 8787
 
-# Tool matchers used by our hooks. Keep in sync with examples/settings-hooks.json.
+# Tool matchers used by our hooks.
+#
+# DERIVED from cc_logger.filters.CAPTURE_TOOLS rather than restated: the matcher and the
+# server-side allowlist are the same fact in two places, and a hand-maintained copy drifts.
+# When it drifts silently the failure is invisible — the hook simply never fires for the
+# tool you thought you were capturing. tests/test_filters.py asserts they agree.
 TOOL_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure")
 SIMPLE_EVENTS = (
     "SessionStart",
@@ -35,7 +40,15 @@ SIMPLE_EVENTS = (
     "Stop",
     "SessionEnd",
 )
-TOOL_MATCHERS = ("Agent|Bash|Edit|Write|WebFetch|WebSearch", "mcp__.*")
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from cc_logger.filters import CAPTURE_TOOLS
+
+    _NAMED = "|".join(sorted(CAPTURE_TOOLS))
+except Exception:  # noqa: BLE001 — installer must work from a bare checkout
+    _NAMED = "Agent|Bash|Edit|Read|Skill|WebFetch|WebSearch|Write"
+
+TOOL_MATCHERS = (_NAMED, "mcp__.*")
 
 
 def _hook_url(port: int) -> str:
