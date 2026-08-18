@@ -3,6 +3,11 @@
 <!-- portfolio-status -->
 **Status:** Production-used — I run this against my own live agent workflows. · **Layer:** Runtime observability · **[Portfolio map ›](https://github.com/kkrlstrm)**
 
+> **Now part of [callusguard](https://github.com/kkrlstrm/callusguard).**
+> cc-logger is the `record` stage of a five-stage loop — `record → derive → guard → verify → prune` — and its full verb set
+> (`serve`, `migrate`, `sessions`, `inspect`, `insights`, `rate`) is exposed there as
+> `callus record`. callusguard ships all five stages for both Claude Code and Codex, as one install. This repo stays up and works; callusguard is where the loop closes.
+
 **Agent QA infrastructure for Claude Code workflows.** Replay, inspect, and compare agent runs so repeated workflows don't silently drift. cc-logger captures every prompt, sub-agent, tool call, and Claude's narration in between into Postgres — so you can see how the work actually happened, not just what came out, and turn your own usage into data you can optimize against.
 
 Two runs of the same workflow can produce identical-looking output while one took the happy path and the other recovered from three failed WebFetches, fell back to a different source, and got lucky. The outputs match. The processes don't. cc-logger is the layer that catches that.
@@ -53,6 +58,8 @@ cc-logger is the flight recorder. [**agent-guard**](https://github.com/kkrlstrm/
 ```
 
 Observe here, enforce there. agent-guard's `derive_rules --from-cc-logger` reads this database directly and proposes candidate rules from your real recurring failures — so "decide what to make deterministic" (above) gets a sibling: decide what to guard. Together they're the full agent-QA loop: observability and conformance here, controls and auditability there.
+
+> **Both halves, plus three more stages, now live in one tool.** [callusguard](https://github.com/kkrlstrm/callusguard) merges cc-logger, agent-guard, codex-logger, codex-guard, and [wroteonly](https://github.com/kkrlstrm/wroteonly) into `record → derive → guard → verify → prune` — adding declared-write-set verification and, the part that keeps a ruleset trustworthy, **pruning rules that have stopped firing**. All 202 tests from the five predecessor repos were ported unchanged.
 
 ## What you get
 
