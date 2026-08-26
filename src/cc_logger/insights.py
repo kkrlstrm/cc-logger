@@ -14,6 +14,34 @@ from collections import Counter
 from . import db
 
 
+# Keep the independent aggregates in separate scalar subqueries.  Joining both
+# child tables to sessions here would multiply every tool call by every
+# invocation in the same session.
+_HEADLINE_SQL = """
+    WITH scoped_sessions AS (
+        SELECT session_id
+        FROM sessions
+        WHERE started_at > now() - (%s || ' days')::interval
+    )
+    SELECT
+      (SELECT count(*) FROM scoped_sessions) AS sessions,
+      (SELECT count(*)
+       FROM tool_calls tc
+       JOIN scoped_sessions s ON s.session_id = tc.session_id) AS tools,
+      (SELECT count(*)
+       FROM tool_calls tc
+       JOIN scoped_sessions s ON s.session_id = tc.session_id
+       WHERE tc.status = 'failure') AS fails,
+      (SELECT count(*)
+       FROM agent_invocations ai
+       JOIN scoped_sessions s ON s.session_id = ai.session_id
+       WHERE ai.parent_invocation_id IS NOT NULL) AS subs,
+      (SELECT count(DISTINCT tc.tool_name)
+       FROM tool_calls tc
+       JOIN scoped_sessions s ON s.session_id = tc.session_id) AS distinct_tools
+"""
+
+
 async def _query_all(cur, sql: str, params: tuple = ()) -> list[dict]:
     await cur.execute(sql, params)
     cols = [c.name for c in cur.description]
@@ -37,18 +65,7 @@ async def report(days: int = 30) -> None:
     async with db.connection() as conn:
         async with conn.cursor() as cur:
             # 1) Headline numbers
-            rows = await _query_all(cur, """
-                SELECT
-                  count(distinct s.session_id) AS sessions,
-                  count(tc.tool_call_id) AS tools,
-                  count(*) FILTER (WHERE tc.status = 'failure') AS fails,
-                  count(distinct ai.invocation_id) FILTER (WHERE ai.parent_invocation_id IS NOT NULL) AS subs,
-                  count(distinct tc.tool_name) AS distinct_tools
-                FROM sessions s
-                LEFT JOIN tool_calls tc ON tc.session_id = s.session_id
-                LEFT JOIN agent_invocations ai ON ai.session_id = s.session_id
-                WHERE s.started_at > now() - (%s || ' days')::interval
-            """, (str(days),))
+            rows = await _query_all(cur, _HEADLINE_SQL, (str(days),))
             r = rows[0]
             print(f"Totals: {r['sessions']} sessions, {r['tools'] or 0} tool calls, "
                   f"{r['fails'] or 0} failures, {r['subs'] or 0} sub-agents, "
