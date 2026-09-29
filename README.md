@@ -1,12 +1,12 @@
 # cc-logger
 
 <!-- portfolio-status -->
-**Status:** Production-used — I run this against my own live agent workflows. · **Layer:** Runtime observability · **[Portfolio map ›](https://github.com/kkrlstrm)**
+**Status:** Production-used in the observability layer of an [internal GTM platform](https://github.com/kkrlstrm/internal-gtm-platform). For the loop that turns these records into guardrails and skills, see [runtune](https://github.com/kkrlstrm/runtune); for guardrails alone, see [callusguard](https://github.com/kkrlstrm/callusguard). · **Layer:** Observability · **[Portfolio map ›](https://github.com/kkrlstrm)**
 
 > **Now part of [callusguard](https://github.com/kkrlstrm/callusguard).**
 > cc-logger is the `record` stage of a five-stage loop — `record → derive → guard → verify → prune` — and its full verb set
 > (`serve`, `migrate`, `sessions`, `inspect`, `insights`, `rate`) is exposed there as
-> `callus record`. callusguard ships all five stages for both Claude Code and Codex, as one install. This repo stays up and works; callusguard is where the loop closes.
+> `callus record`. callusguard ships all five stages for both Claude Code and Codex, as one install. This repo stays up and works; callusguard is the maintained guardrail package; the wider learning loop, which also proposes skills, sub-agents and routes and measures each change against a control, continues in [runtune](https://github.com/kkrlstrm/runtune).
 
 **Agent QA infrastructure for Claude Code workflows.** Replay, inspect, and compare agent runs so repeated workflows don't silently drift. cc-logger captures every prompt, sub-agent, tool call, and Claude's narration in between into Postgres — so you can see how the work actually happened, not just what came out, and turn your own usage into data you can optimize against.
 
