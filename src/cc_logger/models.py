@@ -92,6 +92,26 @@ class SessionEnd(HookEnvelope):
     total_tokens: int | None = None
 
 
+class PeerAddress(HookEnvelope):
+    """Not a Claude Code event. Posted by scripts/peer-address-hook.py (a
+    SessionStart command hook) because the session's inbox socket is only
+    available as an environment variable, which HTTP hooks cannot see."""
+    hook_event_name: Literal["PeerAddress"]
+    messaging_socket: str | None = None
+    source: str | None = None
+    session_title: str | None = None
+
+
+class TranscriptUpload(HookEnvelope):
+    """Not a Claude Code event. Posted by scripts/ship-transcript.py from a machine
+    whose transcripts a remote recorder cannot read: `files` maps a path relative
+    to the session's project dir to that file's text."""
+    hook_event_name: Literal["TranscriptUpload"]
+    project: str
+    trigger: str | None = None
+    files: dict[str, str] = Field(default_factory=dict)
+
+
 HOOK_MODELS: dict[str, type[HookEnvelope]] = {
     "SessionStart": SessionStart,
     "UserPromptSubmit": UserPromptSubmit,
@@ -102,6 +122,8 @@ HOOK_MODELS: dict[str, type[HookEnvelope]] = {
     "SubagentStop": SubagentStop,
     "Stop": Stop,
     "SessionEnd": SessionEnd,
+    "PeerAddress": PeerAddress,
+    "TranscriptUpload": TranscriptUpload,
 }
 
 

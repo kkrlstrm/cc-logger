@@ -50,6 +50,14 @@ except Exception:  # noqa: BLE001 — installer must work from a bare checkout
 
 TOOL_MATCHERS = (_NAMED, "mcp__.*")
 
+# SessionStart also gets a COMMAND hook: the session's cross-session inbox socket is
+# only exported as an environment variable, which an HTTP hook cannot see. Stdlib-only
+# script, so the system interpreter is enough.
+PEER_HOOK_SCRIPT = Path(__file__).resolve().parent / "peer-address-hook.py"
+# /usr/bin/python3 on macOS/Linux; on Windows (no such path, and `python3` can be the
+# Microsoft Store stub) the interpreter running this installer.
+PEER_HOOK_PYTHON = "/usr/bin/python3" if Path("/usr/bin/python3").exists() else sys.executable
+
 
 def _hook_url(port: int) -> str:
     return f"http://127.0.0.1:{port}/hook"
@@ -59,10 +67,19 @@ def _our_hook(port: int) -> dict:
     return {"type": "http", "url": _hook_url(port), "timeout": 5}
 
 
+def _peer_hook(port: int) -> dict:
+    return {
+        "type": "command",
+        "command": f'"{PEER_HOOK_PYTHON}" "{PEER_HOOK_SCRIPT}" --port {port}',
+        "timeout": 5,
+    }
+
+
 def _build_hooks_block(port: int) -> dict:
     block: dict = {}
     for ev in SIMPLE_EVENTS:
         block[ev] = [{"hooks": [_our_hook(port)]}]
+    block["SessionStart"].append({"hooks": [_peer_hook(port)]})
     for ev in TOOL_EVENTS:
         block[ev] = [
             {"matcher": m, "hooks": [_our_hook(port)]} for m in TOOL_MATCHERS
@@ -70,15 +87,35 @@ def _build_hooks_block(port: int) -> dict:
     return block
 
 
-def _is_our_entry(entry: dict, port: int) -> bool:
-    """Identify entries we previously installed (so we can replace/remove them)."""
-    if not isinstance(entry, dict):
-        return False
-    hooks = entry.get("hooks", [])
-    return any(
-        isinstance(h, dict) and h.get("url") == _hook_url(port) and h.get("type") == "http"
-        for h in hooks
+def _is_our_hook(h: dict, port: int) -> bool:
+    """One hook we installed: the HTTP hook at our URL, or the peer-address command."""
+    return isinstance(h, dict) and (
+        (h.get("type") == "http" and h.get("url") == _hook_url(port))
+        or (h.get("type") == "command" and PEER_HOOK_SCRIPT.name in str(h.get("command", "")))
     )
+
+
+def _strip_ours(entries: list, port: int) -> tuple[list, int]:
+    """Remove our hooks from a list of matcher entries, hook by hook.
+
+    Filtering whole ENTRIES was wrong: another tool can put its own hook in the
+    same entry as ours (another tool's SessionStart/SessionEnd commands sat beside our
+    HTTP hook), and dropping the entry silently uninstalled that tool. Only an
+    entry left with no hooks is removed.
+    """
+    kept, removed = [], 0
+    for e in entries:
+        if not isinstance(e, dict):
+            kept.append(e)
+            continue
+        hooks = e.get("hooks", [])
+        others = [h for h in hooks if not _is_our_hook(h, port)]
+        removed += len(hooks) - len(others)
+        if others:
+            kept.append({**e, "hooks": others})
+        elif not hooks:
+            kept.append(e)
+    return kept, removed
 
 
 def install(port: int) -> None:
@@ -96,9 +133,8 @@ def install(port: int) -> None:
     our = _build_hooks_block(port)
 
     for ev, ours in our.items():
-        current = hooks.get(ev, [])
-        # Drop any pre-existing entries that point at our URL (so re-running is idempotent)
-        kept = [e for e in current if not _is_our_entry(e, port)]
+        # Remove our previous hooks (so re-running is idempotent), keep everyone else's
+        kept, _ = _strip_ours(hooks.get(ev, []), port)
         hooks[ev] = kept + ours
 
     SETTINGS.write_text(json.dumps(existing, indent=2) + "\n")
@@ -120,9 +156,8 @@ def uninstall(port: int) -> None:
     for ev in SIMPLE_EVENTS + TOOL_EVENTS:
         if ev not in hooks:
             continue
-        before = len(hooks[ev])
-        hooks[ev] = [e for e in hooks[ev] if not _is_our_entry(e, port)]
-        removed += before - len(hooks[ev])
+        hooks[ev], n = _strip_ours(hooks[ev], port)
+        removed += n
         if not hooks[ev]:
             del hooks[ev]
 

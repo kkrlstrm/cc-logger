@@ -46,6 +46,8 @@ _MIGRATIONS = [
     ("tokens", "004_tokens.py"),           # token-usage columns (recovered from transcripts)
     ("views", "002_views.py"),             # vw_* analytics views (reads token columns)
     ("messages", "003_messages.py"),       # narration table (needed by `inspect`)
+    ("peer", "005_peer_messages.py"),      # cross-session messages (reads sessions)
+    ("subagents", "006_subagents_workflows.py"),  # sub-agent provenance + workflow runs
 ]
 
 
@@ -106,7 +108,7 @@ def main() -> None:
     g.add_argument("--apply", action="store_true")
     g.add_argument("--verify", action="store_true")
     p_mig.add_argument("--only", choices=[s[0] for s in _MIGRATIONS],
-                       help="run a single migration step (schema|views|messages)")
+                       help="run a single migration step (schema|tokens|views|messages|peer|subagents)")
     p_mig.add_argument("--views", action="store_true",
                        help="legacy alias for --only views")
     p_mig.set_defaults(func=cmd_migrate)

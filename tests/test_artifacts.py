@@ -71,3 +71,10 @@ def test_non_string_payload():
     result = truncate(payload)
     assert result.payload == payload
     assert result.artifacts == []
+
+
+def test_nul_characters_are_stripped_so_postgres_accepts_the_row():
+    """A PDF read returned text containing NUL; JSONB rejects it and the row was lost."""
+    from cc_logger.artifacts import truncate
+    out = truncate({"stdout": "Finance Of\x00ficers", "k\x00": ["a\x00b"]}).payload
+    assert out == {"stdout": "Finance Officers", "k": ["ab"]}

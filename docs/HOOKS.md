@@ -30,6 +30,8 @@ Official Claude Code hooks documentation: https://code.claude.com/docs/en/hooks.
 - `WebSearch`
 - `Read` — **attribution**: `tool_input.file_path` is the context artifact loaded
 - `Skill` — **attribution**: which skill a run actually invoked
+- `SendMessage`, `ListAgents` — cross-session messaging (sending half; see "Cross-session messages" below)
+- `Workflow` — fan-out launches; the response's `runId` joins to `workflow_runs` (see "Sub-agents and workflows" below)
 - `mcp__.*` (any MCP server tool, regex)
 
 **Intentionally skipped**: `Glob`, `Grep`, `TodoWrite`, `NotebookEdit`. High-volume, and `Glob`/`Grep` name a *pattern* rather than a specific artifact, so they can't be attributed to a piece of context.
@@ -75,3 +77,44 @@ Models in [`src/cc_logger/models.py`](../src/cc_logger/models.py) use `extra="al
 To pause without uninstalling: stop the launchd/systemd service. Claude Code's hook timeout is 5 seconds; with cc-logger down it logs the failure and continues.
 
 To uninstall fully: `python scripts/install-hooks.py --uninstall` removes the hook entries from settings.json, and `./scripts/uninstall.sh` removes the daemon unit file.
+
+## Cross-session messages
+
+Claude Code sessions on one machine can message each other with `SendMessage`
+([docs](https://code.claude.com/docs/en/cross-session-messaging)). cc-logger records three
+things, in three different ways, because no single hook sees all of it:
+
+| What | How it is captured | Where it lands |
+|---|---|---|
+| The send | `SendMessage` / `ListAgents` in the tool matchers | `tool_calls` |
+| The send + the receipt, joined | Parsed from each transcript on `Stop` / `SessionEnd` (`transcripts.iter_peer_events`). No hook fires when a message arrives. | `peer_messages` (one row per `msg_id`; the id is the same in the sender's tool result and the receiver's `origin`), `peer_notices` |
+| Which session owns which inbox socket | A SessionStart **command** hook, `scripts/peer-address-hook.py`. The socket is only exported as `CLAUDE_CODE_MESSAGING_SOCKET`; an HTTP hook on SessionStart did not fire in a headless `claude -p` test (2026-10-13). | `session_peer_addresses` |
+
+Read it through `vw_peer_messages`. A receipt names its sender only by socket
+(`uds:/tmp/cc-socks/<pid>.sock`); when the sender's transcript was not ingested, the view
+resolves the sender from `session_peer_addresses` by time (`sender_inferred = true`), because
+a socket path is reused once its pid is.
+
+Two record shapes hold a received message: a meta `user` record with top-level `origin`
+(it arrived while the session was idle and started a turn) and an `attachment` of type
+`queued_command` with `attachment.origin` (it arrived mid-turn). Sub-agent hand-backs and a
+background sub-agent messaging its parent also carry `origin.kind == "peer"`; they have
+`senderTaskId` and are excluded.
+
+Backfill everything on disk: `uv run python scripts/backfill-peer-messages.py --apply`.
+
+## Sub-agents and workflows
+
+Three things the hook payloads do not carry, filled from files Claude Code writes beside
+each transcript:
+
+| Gap | Source | Column / table |
+|---|---|---|
+| The task a sub-agent was given (`SubagentStart` has no prompt) | first user message of `subagents/**/agent-<id>.jsonl` | `agent_invocations.prompt_received` |
+| Exact parent of a parallel fan-out (the `subagent_type` match is ambiguous) | `agent-<id>.meta.json` → `toolUseId` | `spawned_by_tool_call_id`, `parent_invocation_id` |
+| Workflow runs (the `Workflow` tool returns at launch) | `<session>/workflows/<runId>.json` | `workflow_runs`; agents link via `agent_invocations.workflow_run_id` |
+
+Filled on `SubagentStop` (provenance) and `Stop` / `SessionEnd` (workflow runs). Read
+`vw_workflow_runs` for a run beside what its agents actually recorded. Rows recovered from
+disk after the fact carry `source = 'backfill'`:
+`uv run python scripts/backfill-subagents.py --apply`.
