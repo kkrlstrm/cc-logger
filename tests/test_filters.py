@@ -19,6 +19,13 @@ def test_context_attribution_tools_are_captured():
     assert should_capture("Skill")
 
 
+def test_cross_session_messaging_tools_are_captured():
+    """`SendMessage` is the only hook-visible record of one session messaging another;
+    the receiving side never fires a hook and is recovered from the transcript."""
+    assert should_capture("SendMessage")
+    assert should_capture("ListAgents")
+
+
 def test_known_skipped_tools():
     """Glob/Grep name a *pattern*, not a specific artifact, so they can't be attributed
     to a piece of context — and they are higher-volume than Read. TodoWrite and
@@ -39,6 +46,9 @@ def test_capture_set_is_explicit():
         "WebSearch",
         "Read",
         "Skill",
+        "SendMessage",
+        "ListAgents",
+        "Workflow",
     }
 
 

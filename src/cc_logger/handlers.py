@@ -18,8 +18,13 @@ from . import models, transcripts
 from .artifacts import truncate
 from .filters import should_capture
 from .linking import resolve_parent
+from .redaction import redact_string
 
 log = logging.getLogger("cc_logger.handlers")
+
+# Cap on a recovered sub-agent result. Big enough for a schema-validated
+# finding, small enough that one runaway agent cannot bloat the table.
+_RESULT_MAX = 20_000
 
 
 def _now() -> datetime:
@@ -249,8 +254,41 @@ async def handle_subagent_stop(conn: AsyncConnection, ev: models.SubagentStop) -
             """,
             (ev.last_message, _now(), ev.agent_id),
         )
-    # Ingest the sub-agent's transcript so its text blocks land in `messages`.
-    await transcripts.ingest(conn, ev.session_id, ev.transcript_path, ev.agent_id)
+    # Ingest the sub-agent's OWN transcript so its text blocks and token usage
+    # land on its own row. `ev.transcript_path` is the session root, not this
+    # agent's file -- passing it recorded the root's cumulative total as the
+    # agent's usage (see transcripts.subagent_transcript). If the agent's file
+    # isn't on disk yet, write nothing; backfill-tokens-model.py recovers it.
+    own = transcripts.subagent_transcript(ev.session_id, ev.agent_id)
+    if own is None:
+        log.warning("no transcript on disk for sub-agent %s; skipping ingest",
+                    ev.agent_id)
+        return
+    await _ingest_subagent(conn, ev.session_id, ev.agent_id, own, ev.last_message)
+
+
+async def _ingest_subagent(conn: AsyncConnection, session_id: str, agent_id: str,
+                           own, last_message: str | None) -> None:
+    """Everything recovered from a sub-agent's own files. Shared by SubagentStop
+    (the file is local) and TranscriptUpload (a remote machine sent it)."""
+    # Prompt, description, workflow run and the exact parent Agent call: none of
+    # them is in the hook payload; all are in the agent's own files.
+    try:
+        await transcripts.apply_agent_provenance(conn, agent_id, own)
+    except Exception:
+        log.exception("provenance update failed for sub-agent %s", agent_id)
+    # The hook's last_message arrives empty, so recover what the agent actually
+    # returned from its own transcript (StructuredOutput input, else final text).
+    if last_message is None:
+        result = transcripts.agent_result(own)
+        if result is not None:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "UPDATE agent_invocations SET last_message = %s "
+                    "WHERE invocation_id = %s AND last_message IS NULL",
+                    (redact_string(result)[:_RESULT_MAX], agent_id),
+                )
+    await transcripts.ingest(conn, session_id, str(own), agent_id)
 
 
 async def handle_stop(conn: AsyncConnection, ev: models.Stop) -> None:
@@ -296,6 +334,78 @@ async def handle_session_end(conn: AsyncConnection, ev: models.SessionEnd) -> No
     await transcripts.ingest(conn, ev.session_id, ev.transcript_path, root_id)
 
 
+async def handle_peer_address(conn: AsyncConnection, ev: models.PeerAddress) -> None:
+    """Record which inbox socket this session owns. A resume or fork starts a
+    new process, so the same session can own several sockets over its life."""
+    address = transcripts._peer_address(ev.messaging_socket)
+    if not address:
+        return
+    pid = None
+    stem = address.rsplit("/", 1)[-1].removesuffix(".sock")
+    if stem.isdigit():
+        pid = int(stem)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            INSERT INTO session_peer_addresses
+                (session_id, address, pid, source, session_source, session_name, recorded_at)
+            VALUES (%s, %s, %s, 'hook', %s, %s, %s)
+            ON CONFLICT (session_id, address) DO UPDATE SET
+                source = 'hook',
+                session_source = COALESCE(EXCLUDED.session_source, session_peer_addresses.session_source),
+                session_name = COALESCE(EXCLUDED.session_name, session_peer_addresses.session_name)
+            """,
+            (ev.session_id, address, pid, ev.source, ev.session_title, _now()),
+        )
+
+
+_UPLOAD_MAX_BYTES = 64 * 1024 * 1024
+
+
+async def handle_transcript_upload(conn: AsyncConnection, ev: models.TranscriptUpload) -> None:
+    """Write a remote machine's transcript files into this recorder's mirror of
+    ~/.claude/projects, then run the ingest the local SubagentStop / Stop would.
+
+    The upload and the HTTP hook events race, so the rows the ingest updates are
+    created here if they do not exist yet; every write is idempotent.
+    """
+    written = []
+    total = 0
+    for rel, text in ev.files.items():
+        target = transcripts.mirror_path(ev.project, rel, ev.session_id)
+        if target is None:
+            log.warning("refusing upload path %r for session %s", rel, ev.session_id)
+            continue
+        total += len(text)
+        if total > _UPLOAD_MAX_BYTES:
+            log.warning("upload for %s over %d bytes; rest dropped", ev.session_id, _UPLOAD_MAX_BYTES)
+            break
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+        written.append(target)
+    if not written:
+        return
+
+    root_id = await _root_invocation_id(conn, ev.session_id)
+    if ev.agent_id:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                INSERT INTO agent_invocations (invocation_id, session_id, agent_id, started_at, status)
+                VALUES (%s, %s, %s, %s, 'pending')
+                ON CONFLICT (invocation_id) DO NOTHING
+                """,
+                (ev.agent_id, ev.session_id, ev.agent_id, _now()),
+            )
+        own = next((p for p in written if p.name == f"agent-{ev.agent_id}.jsonl"), None)
+        if own is not None:
+            await _ingest_subagent(conn, ev.session_id, ev.agent_id, own, None)
+        return
+    root = next((p for p in written if p.name == f"{ev.session_id}.jsonl"), None)
+    if root is not None:
+        await transcripts.ingest(conn, ev.session_id, str(root), root_id)
+
+
 HANDLERS = {
     "SessionStart": handle_session_start,
     "UserPromptSubmit": handle_user_prompt_submit,
@@ -306,6 +416,8 @@ HANDLERS = {
     "SubagentStop": handle_subagent_stop,
     "Stop": handle_stop,
     "SessionEnd": handle_session_end,
+    "PeerAddress": handle_peer_address,
+    "TranscriptUpload": handle_transcript_upload,
 }
 
 

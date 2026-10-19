@@ -39,10 +39,15 @@ def _truncate_recursive(
     artifacts: list[dict],
 ) -> Any:
     if isinstance(node, dict):
-        return {k: _truncate_recursive(v, path + [str(k)], artifacts) for k, v in node.items()}
+        return {str(k).replace("\x00", ""): _truncate_recursive(v, path + [str(k)], artifacts)
+                for k, v in node.items()}
     if isinstance(node, list):
         return [_truncate_recursive(v, path + [f"[{i}]"], artifacts) for i, v in enumerate(node)]
     if isinstance(node, str):
+        # Postgres cannot store NUL in TEXT or JSONB ("\u0000 cannot be converted
+        # to text"), and one NUL fails the whole row. Text extracted from PDFs carries
+        # them, and a row containing one used to be dropped whole.
+        node = node.replace("\x00", "")
         size = _measure(node)
         if size > MAX_FIELD_BYTES:
             artifact_id = str(uuid.uuid4())

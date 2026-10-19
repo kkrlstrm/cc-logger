@@ -10,6 +10,11 @@ an agent did but never which instruction, memory, or skill it did it from — so
 like "which of these 92 skills is ever used" and "does loading REVIEW.md change how a run
 goes" have no data behind them. That is the knowledge-effect attribution gap.
 
+`SendMessage` and `ListAgents` are captured because they are the sending half of
+cross-session messaging: one Claude Code session telling another what changed. The
+receiving half never reaches a hook; it is recovered from the transcript into
+`peer_messages` (see transcripts.iter_peer_events).
+
 Glob/Grep stay out: they are higher-volume still and name a *pattern*, not a specific
 artifact, so they can't be attributed to a piece of context.
 """
@@ -24,6 +29,9 @@ CAPTURE_TOOLS = {
     "WebSearch",
     "Read",   # attribution: file_path == the context artifact loaded
     "Skill",  # attribution: which skill a run actually invoked
+    "SendMessage",  # cross-session + sub-agent messages (the sending half)
+    "ListAgents",   # which peer sessions a session looked up before sending
+    "Workflow",     # fan-out launches; the response's runId joins to workflow_runs
 }
 CAPTURE_TOOL_PATTERNS = [re.compile(r"^mcp__")]
 
